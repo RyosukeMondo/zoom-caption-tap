@@ -136,11 +136,37 @@ async function flush() {
 /** @type {Map<string, object>} */
 const lines = new Map();
 
+// A caption is only fit for the secretary once Zoom has stopped revising it.
+// Feeding interim text to the model poisons the notes: "いく。か。るけど視点製薬"
+// is not a sentence, and the model will faithfully summarise the noise.
+const SETTLE_MS = 8000;
+
 function upsert(msg) {
   const prev = lines.get(msg.messageId);
   if (prev && prev.messageVersion > msg.messageVersion) return false;
-  lines.set(msg.messageId, msg);
+
+  const textChanged = !prev || prev.text !== msg.text;
+  lines.set(msg.messageId, {
+    ...msg,
+    lastChangedAt: textChanged ? Date.now() : prev.lastChangedAt,
+    deliveredToSecretary: prev?.deliveredToSecretary ?? false,
+  });
   return !prev;
+}
+
+/** Lines that have stopped changing and have not yet been handed to the model. */
+function takeSettledLines() {
+  const now = Date.now();
+  const ready = [];
+
+  for (const line of lines.values()) {
+    if (line.deliveredToSecretary) continue;
+    if (now - line.lastChangedAt < SETTLE_MS) continue;
+    line.deliveredToSecretary = true;
+    ready.push(line);
+  }
+
+  return ready.sort((a, b) => a.at - b.at);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -179,6 +205,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         collectorUp,
       });
       return true;
+    case "get-settled":
+      sendResponse({ lines: takeSettledLines(), pending: lines.size });
+      return true;
+    case "open-panel":
+      // Requires a user gesture; the popup click provides it.
+      chrome.sidePanel
+        .open({ tabId: msg.tabId })
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    case "secretary-log":
+      log("secretary", msg.data);
+      return;
     case "clear":
       lines.clear();
       ring.length = 0;

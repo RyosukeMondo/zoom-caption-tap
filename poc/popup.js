@@ -67,6 +67,15 @@ $grant.addEventListener("click", async () => {
   await refresh();
 });
 
+document.getElementById("panel").addEventListener("click", async () => {
+  // Called directly here, not via the service worker: sidePanel.open() requires
+  // a user gesture in the calling context, and forwarding a message would lose
+  // it. The popup click is the gesture.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  await chrome.sidePanel.open({ tabId: tab.id });
+  window.close();
+});
+
 document.getElementById("clear").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "clear" });
   await refresh();

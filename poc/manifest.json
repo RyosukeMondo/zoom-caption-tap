@@ -11,7 +11,11 @@
     "default_title": "Zoom Caption Tap"
   },
 
-  "permissions": ["scripting", "storage"],
+  "permissions": ["scripting", "storage", "sidePanel"],
+
+  "side_panel": { "default_path": "sidepanel.html" },
+
+  "minimum_chrome_version": "138",
 
   "host_permissions": ["http://127.0.0.1:8787/*"],
 

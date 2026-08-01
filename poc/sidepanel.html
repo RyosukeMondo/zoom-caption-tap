@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Meeting Secretary</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #e0e0e0;
+    --chip: #eef2ff;
+    --chip-fg: #3730a3;
+    --ok: #15803d;
+    --warn: #b45309;
+    --bad: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e8e8e8;
+      --muted: #9a9a9a;
+      --line: #333;
+      --chip: #1e1b4b;
+      --chip-fg: #c7d2fe;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --bad: #f87171;
+    }
+  }
+
+  body {
+    margin: 0;
+    padding: 12px;
+    font: 13px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    color: var(--fg);
+  }
+
+  header { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  #status { margin: 8px 0 2px; font-size: 12px; color: var(--muted); }
+  #status.ok { color: var(--ok); }
+  #status.warn { color: var(--warn); }
+  #status.bad { color: var(--bad); }
+  #tickinfo { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+
+  h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 14px 0 4px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 3px;
+  }
+  ul { margin: 0; padding-left: 1.1em; }
+  li { margin-bottom: 3px; }
+  .empty { color: var(--muted); list-style: none; margin-left: -1.1em; }
+  .badge { font-size: 10px; color: var(--muted); }
+
+  #keywords { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--chip);
+    color: var(--chip-fg);
+    text-decoration: none;
+    font-size: 12px;
+  }
+  .chip:hover { text-decoration: underline; }
+
+  footer { margin-top: 16px; font-size: 11px; color: var(--muted); }
+</style>
+
+<header>
+  <button id="start">▶ 開始</button>
+  <button id="stop" disabled>■ 停止</button>
+  <button id="export">⧉ Markdown</button>
+</header>
+
+<div id="status">…</div>
+<div id="tickinfo"></div>
+
+<h2>議題</h2>
+<ul id="topics"></ul>
+
+<h2>決定事項</h2>
+<ul id="decisions"></ul>
+
+<h2>アクション</h2>
+<ul id="actions"></ul>
+
+<h2>未解決の質問</h2>
+<ul id="questions"></ul>
+
+<h2>キーワード</h2>
+<div id="keywords"></div>
+
+<footer>
+  30秒ごとに確定した字幕のみを Gemini Nano で抽出し、蓄積します。<br />
+  リンクは拡張機能側で生成（モデルはURLを出力しません）。
+</footer>
+
+<script src="sidepanel.js"></script>
