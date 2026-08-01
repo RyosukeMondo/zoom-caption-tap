@@ -97,6 +97,46 @@
     margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
     color: var(--muted); font-size: 14px;
   }
+
+  /* Mock-ups of the actual extension UI */
+  .mock {
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); padding: 12px; margin: 18px 0;
+    font-size: 13px; line-height: 1.7;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  .mock-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  .mock-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .mock-btn {
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 3px 10px; background: var(--card); white-space: nowrap;
+  }
+  .mock-status { color: var(--muted); font-size: 12px; }
+  .mock-status.green { color: #1a7f37; }
+  @media (prefers-color-scheme: dark) { .mock-status.green { color: #3fb950; } }
+  .mock-sep { border-top: 1px solid var(--line); margin: 8px 0; }
+  .mock-h {
+    font-size: 11px; letter-spacing: .05em; color: var(--muted);
+    border-bottom: 1px solid var(--line); padding-bottom: 2px;
+    margin: 10px 0 4px;
+  }
+  .mock ul { margin: 0; padding-left: 1.2em; }
+  .mock .line { color: var(--muted); font-size: 12px; }
+  .mock-chip {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: #eef2ff; color: #3730a3; font-size: 12px; margin: 2px 2px 0 0;
+  }
+  @media (prefers-color-scheme: dark) {
+    .mock-chip { background: #1e1b4b; color: #c7d2fe; }
+  }
+  .cal {
+    display: inline-grid; place-items: center;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 700; vertical-align: middle;
+    margin-right: 4px; flex: none;
+  }
+  td .cal { margin-right: 0; }
 </style>
 </head>
 <body>
@@ -280,6 +320,231 @@
 </li>
 
 </ol>
+
+<h2>使い方</h2>
+<p>
+  画面は 2 つあります。<strong>小さいポップアップ</strong>（字幕がちゃんと取れているかの確認用）と、
+  <strong>右側のパネル</strong>（議事録そのもの）です。
+</p>
+
+<h3>① ポップアップ — 字幕が取れているかを確認する</h3>
+<p>
+  Chrome 右上のパズルのアイコン🧩 → <strong>Zoom Caption Tap</strong> で開きます。
+  <strong>「ちゃんと聞き取れているか」を確認するための画面</strong>です。
+</p>
+
+<div class="mock">
+  <div class="mock-title">Zoom Caption Tap (PoC)</div>
+  <div class="mock-row">
+    <span class="mock-btn"><span class="cal">1</span>Enable on zoom.us</span>
+    <span class="mock-btn"><span class="cal">2</span>Open secretary</span>
+    <span class="mock-btn"><span class="cal">3</span>Clear</span>
+  </div>
+  <div class="mock-status green"><span class="cal">4</span>Enabled on zoom.us · 40 lines · collector: connected</div>
+  <div class="mock-sep"></div>
+  <div class="line"><span class="cal">5</span>もんど: 作るのに90時間かかったとしましょう。</div>
+  <div class="line" style="padding-left:22px">もんど: 一本作るのに140時間。</div>
+  <div class="line" style="padding-left:22px">もんど: さて、噂では近年最低賃金は…</div>
+</div>
+
+<div class="scroll">
+<table>
+  <tr><th>場所</th><th>意味</th></tr>
+  <tr>
+    <td><span class="cal">1</span></td>
+    <td>Zoom へのアクセスを許可します。<strong>最初に 1 回だけ</strong>押します。
+        許可済みになると押せなくなります（それが正常です）。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">2</span></td>
+    <td>議事録パネルを右側に開きます。<strong>ふだん使うのはこちら</strong>です。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">3</span></td>
+    <td>これまでに取り込んだ字幕をすべて消します。
+        <strong>次の会議を始める前</strong>に押してください。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">4</span></td>
+    <td>現在の状態。<code>40 lines</code> は取り込んだ発言の数です。
+        <strong>話しているのにこの数字が増えなければ、字幕が取れていません。</strong></td>
+  </tr>
+  <tr>
+    <td><span class="cal">5</span></td>
+    <td>実際に取り込まれた発言。ここに文字が出ていれば成功です。
+        まだ何も出ていないときは、代わりに動作状況が表示されます。</td>
+  </tr>
+</table>
+</div>
+
+<div class="box warn">
+  <strong>ここを最初に確認してください</strong>
+  <p>
+    議事録がうまく作られないときは、まずこのポップアップを見ます。
+    <strong>ここに発言が出ていなければ、AI 以前に字幕が取れていません。</strong>
+    その場合は Zoom の字幕設定（手順 7）と、ブラウザ版で参加しているか（手順 6）を確認してください。
+  </p>
+</div>
+
+<h3>② 議事録パネル — 実際に議事録を見る</h3>
+<p>
+  ポップアップの <strong>「Open secretary」</strong> で、画面の右側に開きます。
+  会議中はこれを開いたままにしてください。
+</p>
+
+<div class="box warn">
+  <strong>パネルは閉じないでください</strong>
+  <p>
+    AI はこのパネルの中で動いています。パネルを閉じると議事録の更新が止まります
+    （それまでの内容は消えませんが、続きは記録されません）。
+  </p>
+</div>
+
+<div class="mock">
+  <div class="mock-row">
+    <span class="mock-btn"><span class="cal">1</span>▶ 開始</span>
+    <span class="mock-btn"><span class="cal">2</span>■ 停止</span>
+    <span class="mock-btn"><span class="cal">3</span>⧉ Markdown</span>
+  </div>
+  <div class="mock-status green"><span class="cal">4</span>ok · 4067ms</div>
+  <div class="mock-status"><span class="cal">5</span>ticks 11 · items 74 · fails 0 · lines 37</div>
+
+  <div class="mock-h">議題</div>
+  <ul><li>企画の利益化手法</li><li>収益申請の承認までの期間</li></ul>
+
+  <div class="mock-h">決定事項</div>
+  <ul><li>—</li></ul>
+
+  <div class="mock-h">アクション</div>
+  <ul><li>三本目の動画を投稿する</li></ul>
+
+  <div class="mock-h">未解決の質問</div>
+  <ul><li>—</li></ul>
+
+  <div class="mock-h">キーワード</div>
+  <div>
+    <span class="mock-chip">パルワールド</span>
+    <span class="mock-chip">クッキークリッカー</span>
+    <span class="mock-chip">収益化アカウント</span>
+    <span class="mock-chip">YouTube</span>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <tr><th>場所</th><th>意味</th></tr>
+  <tr>
+    <td><span class="cal">1</span></td>
+    <td>議事録の作成を始めます。<strong>会議が始まってから押してください。</strong>
+        以後、30 秒ごとに自動で更新されます。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">2</span></td>
+    <td>更新を止めます。すでに作られた内容は残ります。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">3</span></td>
+    <td>議事録をコピーします。そのままメール・Notion・Word などに貼り付けられます。
+        全発言記録も一緒に入ります。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">4</span></td>
+    <td>AI の状態と、前回の処理にかかった時間。
+        <code>ok</code> なら正常です（詳しくは下の表）。</td>
+  </tr>
+  <tr>
+    <td><span class="cal">5</span></td>
+    <td>
+      <code>ticks</code> AI が動いた回数 ／
+      <code>items</code> 集まった項目数 ／
+      <code>fails</code> 失敗回数 ／
+      <code>lines</code> 読み取った発言数
+    </td>
+  </tr>
+</table>
+</div>
+
+<h4>5 つの項目について</h4>
+<div class="scroll">
+<table>
+  <tr><th>項目</th><th>入るもの</th></tr>
+  <tr><td>議題</td><td>何について話していたか</td></tr>
+  <tr><td>決定事項</td><td>「〜することにした」と決まったこと</td></tr>
+  <tr><td>アクション</td><td>誰かがやると決まった作業</td></tr>
+  <tr><td>未解決の質問</td><td>出たけれど答えが出ていない疑問</td></tr>
+  <tr><td>キーワード</td><td>出てきた固有名詞・専門用語。<strong>クリックすると Google 検索が開きます</strong></td></tr>
+</table>
+</div>
+
+<div class="box ok">
+  <strong>「—」は正常です</strong>
+  <p>
+    決定事項が「—」のままでも故障ではありません。
+    まだ何も決まっていない会議では、AI は<strong>無理にでっち上げず空のままにします</strong>。
+    雑談や報告だけの会議では、決定事項が最後まで空のこともあります。
+  </p>
+  <p>
+    同じ内容が何度も出てくると <code>×3</code> のような数字が付きます。
+    これは<strong>繰り返し話題に出た＝重要</strong>という目印です。
+  </p>
+</div>
+
+<h3>③ 会議中の流れ（まとめ）</h3>
+<ol>
+  <li>Zoom に<strong>ブラウザで</strong>参加する</li>
+  <li>Zoom の<strong>字幕をオンにする</strong></li>
+  <li>🧩 → Zoom Caption Tap →（前の会議の分があれば）<strong>Clear</strong></li>
+  <li><strong>Open secretary</strong> で右側にパネルを開く</li>
+  <li>パネルの <strong>▶ 開始</strong> を押す</li>
+  <li>会議をする（30 秒ごとに自動で更新されます）</li>
+  <li>終わったら <strong>⧉ Markdown</strong> でコピーして保存</li>
+</ol>
+
+<h3>④ 状態表示の読み方</h3>
+<div class="scroll">
+<table>
+  <tr><th>表示</th><th>意味</th><th>対処</th></tr>
+  <tr>
+    <td><code>model: available</code></td><td>AI が使える状態</td><td>▶ 開始 を押せます</td>
+  </tr>
+  <tr>
+    <td><code>session ready</code></td><td>準備完了</td><td>—</td>
+  </tr>
+  <tr>
+    <td><code>extracting…</code></td><td>AI が考え中</td><td>数秒待ちます</td>
+  </tr>
+  <tr>
+    <td><code>ok · 4067ms</code></td><td>正常に更新できた</td><td>—</td>
+  </tr>
+  <tr>
+    <td><code>no new settled lines</code></td>
+    <td>新しい発言がなかった</td>
+    <td>誰も話していなければ正常です</td>
+  </tr>
+  <tr>
+    <td><code>downloading model: 45%</code></td>
+    <td>AI 本体をダウンロード中（初回のみ）</td>
+    <td>終わるまで待ちます</td>
+  </tr>
+  <tr>
+    <td><code>model: unavailable</code></td>
+    <td>この PC では AI が使えない</td>
+    <td>下の「うまくいかないときは」を確認</td>
+  </tr>
+</table>
+</div>
+
+<div class="box warn">
+  <strong>議事録は必ず確認してください</strong>
+  <p>
+    2 つの理由で内容が間違うことがあります。
+    ひとつは Zoom の字幕自体の聞き間違い、
+    もうひとつはパソコン内蔵 AI の性能の限界です（ChatGPT などより控えめです）。
+  </p>
+  <p>
+    <strong>そのまま配布せず、必ず人の目で直してから使ってください。</strong>
+  </p>
+</div>
 
 <h2>うまくいかないときは</h2>
 
