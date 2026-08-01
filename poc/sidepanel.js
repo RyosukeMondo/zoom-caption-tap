@@ -57,7 +57,11 @@ const SYSTEM_PROMPT = `あなたは会議の書記です。会議の発言記録
 - URLやリンクは絶対に出力しない。
 - 出力は日本語。
 - 該当がない項目は空の配列を返す。
-- 各項目は簡潔に、1文で。`;
+- 各項目は簡潔に、1文で。複数の話題を「、」でつなげず、分けて出す。
+
+アクション: 誰かが実行すると明示的に決まったタスクのみ。比喩や願望は含めない。
+キーワード: 検索する価値のある固有名詞・製品名・サービス名・専門用語のみ。
+  「夢」「現実」「人生」「ゲーム」のような一般的な単語は絶対に含めない。`;
 
 // Same options object for availability() and create() — required, because some
 // builds support a modality or language that others do not.
@@ -91,12 +95,46 @@ function normalize(s) {
     .replace(/[\s、。，．,.・:：;；!?！？「」『』()（）]/g, "");
 }
 
-function mergeInto(bucket, incoming) {
+// Generic vocabulary that is never worth a search link. Prompting alone does
+// not reliably suppress these on a model this small, so filter deterministically
+// as well.
+const KEYWORD_STOPLIST = new Set([
+  "夢", "現実", "人生", "ゲーム", "給料", "本社", "増加", "数字", "内容",
+  "時間", "日数", "期間", "方法", "話", "動画", "収益", "再生", "登録",
+  "投稿", "企画", "利益", "係数", "傾き", "増え方", "延び方",
+]);
+
+/**
+ * Keywords become clickable searches, so junk here is worse than a missing
+ * entry. Observed failure modes: single-letter ASR fragments ("D", "S", "V")
+ * and generic nouns.
+ */
+function isUsefulKeyword(text) {
+  if (text.length < 2) return false;
+  // "D", "SV" — ASR debris. Long ASCII like "YouTube" survives.
+  if (/^[\x20-\x7e]+$/.test(text) && text.length < 4) return false;
+  if (KEYWORD_STOPLIST.has(text)) return false;
+  if (/^[ぁ-ん]{1,3}$/.test(text)) return false; // bare hiragana particle-ish
+  return true;
+}
+
+// Buckets must not grow without bound over a long meeting.
+const BUCKET_CAP = 40;
+
+function capBucket(bucket) {
+  if (bucket.length <= BUCKET_CAP) return;
+  // Keep what recurred (corroborated) and what is recent; drop one-off noise.
+  bucket.sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen);
+  bucket.length = BUCKET_CAP;
+}
+
+function mergeInto(bucket, incoming, { keywords = false } = {}) {
   let added = 0;
 
   for (const rawItem of incoming) {
     const text = String(rawItem ?? "").trim();
     if (!text) continue;
+    if (keywords && !isUsefulKeyword(text)) continue;
     const key = normalize(text);
     if (!key) continue;
 
@@ -119,6 +157,7 @@ function mergeInto(bucket, incoming) {
     added += 1;
   }
 
+  capBucket(bucket);
   return added;
 }
 
@@ -280,7 +319,7 @@ async function tick() {
     mergeInto(note.decisions, extraction.decisions) +
     mergeInto(note.actions, extraction.actions) +
     mergeInto(note.questions, extraction.questions) +
-    mergeInto(note.keywords, extraction.keywords);
+    mergeInto(note.keywords, extraction.keywords, { keywords: true });
 
   stats.extracted += added;
   setStatus(`ok · ${stats.lastLatencyMs}ms`, "ok");
@@ -347,7 +386,10 @@ function renderKeywords() {
   el.replaceChildren(
     ...note.keywords
       .slice()
-      .sort((a, b) => b.count - a.count)
+      // Corroborated first, then recent. Capped so the panel stays scannable
+      // rather than becoming a wall of chips.
+      .sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen)
+      .slice(0, 24)
       .map((k) => {
         // URL built here, from a keyword string. The model never sees a URL and
         // never emits one.
