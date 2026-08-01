@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zoom Caption Tap — インストール手順</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --line: #d8dee4;
+    --accent: #0969da;
+    --card: #f6f8fa;
+    --warn-bg: #fff8c5;
+    --warn-line: #d4a72c;
+    --warn-fg: #4d2d00;
+    --danger-bg: #ffebe9;
+    --danger-line: #ff8182;
+    --danger-fg: #6f1214;
+    --ok-bg: #dafbe1;
+    --ok-line: #4ac26b;
+    --ok-fg: #04260f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #30363d;
+      --accent: #4493f8; --card: #161b22;
+      --warn-bg: #2d2200; --warn-line: #9e6a03; --warn-fg: #f0d78c;
+      --danger-bg: #2d0f0f; --danger-line: #b62324; --danger-fg: #ffb1af;
+      --ok-bg: #0f2818; --ok-line: #2ea043; --ok-fg: #adf5c0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.85 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 28px; line-height: 1.4; margin: 0 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 28px; }
+  h2 {
+    font-size: 20px; margin: 44px 0 14px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  a { color: var(--accent); }
+  code {
+    background: var(--card); padding: 2px 6px; border-radius: 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+    word-break: break-all;
+  }
+
+  .box { border-radius: 8px; padding: 14px 16px; margin: 18px 0; border: 1px solid; }
+  .warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-fg); }
+  .danger { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger-fg); }
+  .ok { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-fg); }
+  .box p:first-child { margin-top: 0; }
+  .box p:last-child { margin-bottom: 0; }
+  .box strong { display: block; margin-bottom: 4px; }
+
+  .dl {
+    display: inline-block; background: var(--accent); color: #fff;
+    padding: 12px 26px; border-radius: 8px; text-decoration: none;
+    font-weight: 600; margin: 8px 0;
+  }
+
+  ol.steps { padding-left: 0; list-style: none; counter-reset: step; }
+  ol.steps > li {
+    counter-increment: step; position: relative;
+    padding: 0 0 22px 46px; margin: 0;
+    border-left: 2px solid var(--line);
+  }
+  ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute; left: -16px; top: 0;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 700;
+  }
+  ol.steps h3 { margin-top: 2px; }
+
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+  th { background: var(--card); }
+  .scroll { overflow-x: auto; }
+
+  details {
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 16px; margin: 12px 0; background: var(--card);
+  }
+  summary { cursor: pointer; font-weight: 600; }
+  footer {
+    margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Zoom Caption Tap<br />インストール手順</h1>
+<p class="lead">
+  Zoom の字幕をブラウザ内で読み取り、パソコンの中だけで動く AI（Gemini Nano）が
+  リアルタイムに議事録を作る拡張機能です。
+</p>
+
+<div class="box danger">
+  <strong>⚠ はじめにお読みください</strong>
+  <p>
+    これは<strong>研究用の試作品（PoC）</strong>です。Chrome ウェブストアには公開されていません。
+    製品ではないため、動作の保証・サポートはありません。
+  </p>
+  <p>
+    また、<strong>会議の録音・文字起こしには参加者の同意が必要</strong>です。
+    法律は国や地域によって異なります。必ず事前に参加者へお伝えください。
+  </p>
+</div>
+
+<div class="box ok">
+  <strong>✔ 外部に送信されません</strong>
+  <p>
+    字幕も議事録も、あなたのパソコンの中だけで処理されます。
+    外部のサーバーやクラウド AI には一切送信されません。
+  </p>
+</div>
+
+<h2>動作に必要なもの</h2>
+<div class="scroll">
+<table>
+  <tr><th>項目</th><th>必要な条件</th><th>確認方法</th></tr>
+  <tr>
+    <td>ブラウザ</td><td>Google Chrome バージョン 138 以上</td>
+    <td>Chrome で <code>chrome://version</code> を開く</td>
+  </tr>
+  <tr>
+    <td>パソコン</td><td>Windows 10/11・macOS 13 以上・Linux</td>
+    <td>スマートフォンでは動きません</td>
+  </tr>
+  <tr>
+    <td>空き容量</td><td>22 GB 以上</td>
+    <td>AI モデルのダウンロードに必要</td>
+  </tr>
+  <tr>
+    <td>メモリ</td><td>16 GB 以上（推奨）</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td>Zoom</td><td><strong>ブラウザ版</strong>で参加できること</td>
+    <td>デスクトップアプリでは動きません</td>
+  </tr>
+</table>
+</div>
+
+<h2>ダウンロード</h2>
+<p>
+  <a class="dl" id="dl" href="https://github.com/RyosukeMondo/zoom-caption-tap/releases/latest">
+    ↓ 最新版をダウンロード
+  </a>
+</p>
+<p class="lead">
+  リンク先の <strong>Assets</strong> の中にある
+  <code>zoom-caption-tap.zip</code> をクリックしてください。
+</p>
+
+<h2>インストール手順</h2>
+
+<ol class="steps">
+
+<li>
+  <h3>ZIP ファイルを解凍する</h3>
+  <p>
+    ダウンロードした <code>zoom-caption-tap.zip</code> を右クリックして
+    「すべて展開」（Mac は ダブルクリック）を選びます。
+  </p>
+  <p>
+    出てきたフォルダは<strong>削除しないでください</strong>。
+    拡張機能はこのフォルダを読み続けるため、消すと動かなくなります。
+    デスクトップや書類フォルダなど、分かりやすい場所に置いてください。
+  </p>
+</li>
+
+<li>
+  <h3>Chrome の拡張機能ページを開く</h3>
+  <p>
+    Chrome のアドレス欄に次の文字をコピーして貼り付け、Enter キーを押します。
+  </p>
+  <p><code>chrome://extensions</code></p>
+</li>
+
+<li>
+  <h3>「デベロッパー モード」をオンにする</h3>
+  <p>
+    ページの<strong>右上</strong>にあるスイッチをクリックしてオンにします。
+    オンにすると、上部に新しいボタンが表示されます。
+  </p>
+</li>
+
+<li>
+  <h3>フォルダを読み込む</h3>
+  <p>
+    左上に現れた
+    <strong>「パッケージ化されていない拡張機能を読み込む」</strong>
+    をクリックします。
+  </p>
+  <p>
+    手順 1 で解凍したフォルダの中の <strong><code>poc</code> フォルダ</strong>を選んで
+    「フォルダーの選択」を押してください。
+  </p>
+  <div class="box warn">
+    <strong>ポイント</strong>
+    <p>
+      選ぶのは <code>poc</code> フォルダ<strong>そのもの</strong>です。
+      中のファイルを個別に選ぶのではありません。
+      正しく選べていれば、<code>manifest.json</code> というファイルが中にあります。
+    </p>
+  </div>
+</li>
+
+<li>
+  <h3>Zoom へのアクセスを許可する</h3>
+  <p>
+    Chrome 右上のパズルのようなアイコン🧩をクリックし、
+    <strong>Zoom Caption Tap</strong> を選びます。
+  </p>
+  <p>
+    小さな画面が出たら <strong>「Enable on zoom.us」</strong> を押し、
+    表示される確認に「許可」と答えてください。
+  </p>
+</li>
+
+<li>
+  <h3>Zoom に「ブラウザで」参加する</h3>
+  <div class="box warn">
+    <strong>ここが一番間違えやすいところです</strong>
+    <p>
+      Zoom の<strong>デスクトップアプリでは動きません</strong>。
+      アプリは Chrome の外で動くソフトなので、拡張機能からは中身が見えないためです。
+    </p>
+  </div>
+  <p>
+    会議の参加リンクを開いたとき、
+    <strong>「ブラウザから参加してください」</strong>
+    （Join from Your Browser）というリンクを押してください。
+  </p>
+  <p>
+    アドレス欄が <code>zoom.us/wc/…</code> のような表示になっていれば成功です。
+  </p>
+</li>
+
+<li>
+  <h3>Zoom の字幕をオンにする</h3>
+  <p>
+    会議画面の下にある <strong>「字幕」</strong>（CC / Captions）を押し、
+    <strong>「ライブ文字起こしを有効にする」</strong> を選びます。
+  </p>
+  <p>
+    ボタンが見つからない場合は、Zoom の設定ページ →「ミーティングにて（詳細）」→
+    「自動字幕」をオンにしてください（主催者のみ設定できます）。
+  </p>
+</li>
+
+<li>
+  <h3>議事録を開始する</h3>
+  <p>
+    もう一度パズルのアイコン🧩 → <strong>Zoom Caption Tap</strong> →
+    <strong>「Open secretary」</strong> を押します。
+  </p>
+  <p>
+    画面の右側にパネルが開くので、<strong>「▶ 開始」</strong> を押してください。
+    30 秒ごとに議題・決定事項・アクション・キーワードが自動でたまっていきます。
+  </p>
+  <p>
+    <strong>「⧉ Markdown」</strong> を押すと、議事録をコピーして
+    メールや Notion などに貼り付けられます。
+  </p>
+</li>
+
+</ol>
+
+<h2>うまくいかないときは</h2>
+
+<details>
+<summary>字幕は出ているのに、議事録が増えない</summary>
+<p>
+  まず Zoom の画面に字幕が実際に表示されているか確認してください。
+  表示されていない場合は手順 7 をやり直します。
+</p>
+<p>
+  字幕が出ているのに増えない場合は、Zoom のタブを一度
+  <strong>再読み込み（F5キー）</strong>してください。
+  拡張機能はページを開いた瞬間に動き出すため、
+  後から入れた場合は読み込み直しが必要です。
+</p>
+</details>
+
+<details>
+<summary>「▶ 開始」を押しても model: unavailable と出る</summary>
+<p>
+  パソコンの中の AI（Gemini Nano）がまだ使える状態になっていません。
+  以下を順に確認してください。
+</p>
+<ul>
+  <li>Chrome のバージョンが 138 以上か（<code>chrome://version</code>）</li>
+  <li>ハードディスクの空き容量が 22 GB 以上あるか</li>
+  <li><code>chrome://on-device-internals</code> を開き、モデルの状態を確認する</li>
+</ul>
+<p>
+  初回は AI モデル（約 4 GB）のダウンロードが必要です。
+  時間がかかる場合があります。
+</p>
+</details>
+
+<details>
+<summary>拡張機能を入れ直したい・消したい</summary>
+<p>
+  <code>chrome://extensions</code> を開き、
+  Zoom Caption Tap の「削除」を押してください。
+  解凍したフォルダも一緒に削除して構いません。
+</p>
+</details>
+
+<details>
+<summary>議事録の内容が間違っている</summary>
+<p>
+  この拡張機能は Zoom が作った字幕をそのまま読み取ります。
+  Zoom の字幕自体が聞き間違えている場合、議事録にもそのまま反映されます。
+</p>
+<p>
+  また、パソコンの中で動く AI は、クラウドの AI（ChatGPT など）に比べると
+  性能が控えめです。<strong>議事録は必ず人の目で確認してください。</strong>
+</p>
+</details>
+
+<h2>この拡張機能の仕組み</h2>
+<p>
+  Zoom のブラウザ版が内部で持っている字幕データを直接読み取っています。
+  画面の文字を読み取っている（スクリーンショットのような）わけではありません。
+</p>
+<p>
+  会議に AI ボットが参加することもありません。
+  あなたのブラウザ自体がすでに参加者なので、
+  そのブラウザが知っている情報を読んでいるだけです。
+</p>
+<p>
+  技術的な詳細は
+  <a href="https://github.com/RyosukeMondo/zoom-caption-tap">GitHub のリポジトリ</a>
+  に記載しています。
+</p>
+
+<footer>
+  <p>
+    Zoom Caption Tap — 研究用の試作品です。
+    <a href="https://github.com/RyosukeMondo/zoom-caption-tap">ソースコード（GitHub）</a>
+  </p>
+  <p>
+    Zoom は Zoom Communications, Inc. の商標です。本プロジェクトは Zoom とは関係ありません。
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
