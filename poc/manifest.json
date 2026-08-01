@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Zoom Caption Tap (PoC)",
+  "version": "0.1.0",
+  "description": "Research PoC: read Zoom Web Client live-transcription captions from the page's own state, without a meeting bot.",
+
+  "background": { "service_worker": "background.js" },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Zoom Caption Tap"
+  },
+
+  "permissions": ["scripting", "storage"],
+
+  "host_permissions": ["http://127.0.0.1:8787/*"],
+
+  "optional_host_permissions": [
+    "*://*.zoom.us/*"
+  ]
+}
