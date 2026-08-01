@@ -3,6 +3,9 @@
 Investigation into how Tactiq and similar "no bot joins your meeting" tools
 extract Zoom's live transcript, plus a minimal working proof-of-concept.
 
+> **インストール手順（非エンジニア向け）** → https://ryosukemondo.github.io/zoom-caption-tap/
+> **ダウンロード** → [最新リリース](https://github.com/RyosukeMondo/zoom-caption-tap/releases/latest)
+
 **Verified against a live Zoom meeting on 2026-08-01** (Zoom PWA web client,
 Japanese live transcription). Everything below is observed behaviour, not
 inference, unless marked otherwise.
