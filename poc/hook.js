@@ -216,8 +216,26 @@
 
   let actionsSeen = 0;
 
+  // Two observation paths can be simultaneously active for the very same
+  // store: (1) observe() wraps the root reducer and calls onAction
+  // synchronously while the action is being dispatched; (2) markStore()'s
+  // subscribe listener fires right after, reading the echo slice (SLICE) that
+  // combineReducers' wrapped reducer set to the raw action on that same
+  // dispatch. That happens whenever both combineReducers and
+  // createStore/legacy_createStore/configureStore get wrapped for one store
+  // — the common case, not an edge case. Redux delivers the identical action
+  // object reference to both call sites, back to back inside one synchronous
+  // dispatch(), so an identity check collapses the second delivery precisely:
+  // genuinely distinct actions are always freshly constructed objects, even
+  // when their contents happen to be textually identical (e.g. two caption
+  // updates with unchanged text still get new entry/collection objects), so
+  // this can never suppress a real action.
+  let lastObservedAction = null;
+
   function onAction(action) {
     if (!action || typeof action.type !== "string") return;
+    if (action === lastObservedAction) return;
+    lastObservedAction = action;
 
     actionsSeen += 1;
     if (DISCOVER) {

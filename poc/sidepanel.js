@@ -91,6 +91,7 @@ const stats = { ticks: 0, extracted: 0, failures: 0, lastLatencyMs: 0 };
 // whitespace and compare the residue.
 function normalize(s) {
   return String(s)
+    .normalize("NFKC") // fold full-width/half-width variants (e.g. Ａ↔A, ｶﾞ↔ガ) together
     .toLowerCase()
     .replace(/[\s、。，．,.・:：;；!?！？「」『』()（）]/g, "");
 }
@@ -168,6 +169,11 @@ function mergeInto(bucket, incoming, { keywords = false } = {}) {
 let baseSession = null;
 let running = false;
 let timer = null;
+// Guards against a tick still awaiting extraction when the next interval
+// fires: extractFromChunk()'s latency is model-dependent and not bounded by
+// TICK_MS, so without this a slow tick and the next scheduled one would both
+// call get-settled and extract concurrently, racing on rawTranscript/note.
+let ticking = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -316,58 +322,66 @@ async function extractFromChunk(chunkText) {
 // ---------------------------------------------------------------------------
 
 async function tick() {
-  if (!running) return;
+  // ticking guards re-entrancy: extraction latency is model-dependent and can
+  // exceed TICK_MS, and without this a still-in-flight tick and the next
+  // scheduled one would both pull get-settled and extract concurrently.
+  if (!running || ticking) return;
+  ticking = true;
 
-  const res = await chrome.runtime.sendMessage({ type: "get-settled" });
-  const settled = res?.lines ?? [];
-  if (!settled.length) {
-    $("tickinfo").textContent = `no new settled lines · ticks ${stats.ticks}`;
-    return;
-  }
-
-  for (const line of settled) rawTranscript.push(line);
-
-  let chunk = settled.map((l) => `${l.speaker}: ${l.text}`).join("\n");
-  if (chunk.length > MAX_CHARS_PER_TICK) chunk = chunk.slice(-MAX_CHARS_PER_TICK);
-
-  stats.ticks += 1;
-  setStatus("extracting…", "warn");
-
-  let extraction = null;
   try {
-    extraction = await extractFromChunk(chunk);
-  } catch (err) {
-    stats.failures += 1;
-    setStatus(`extraction failed: ${err}`, "bad");
-    logToCollector({ event: "extract-error", error: String(err) });
-    return;
+    const res = await chrome.runtime.sendMessage({ type: "get-settled" });
+    const settled = res?.lines ?? [];
+    if (!settled.length) {
+      $("tickinfo").textContent = `no new settled lines · ticks ${stats.ticks}`;
+      return;
+    }
+
+    for (const line of settled) rawTranscript.push(line);
+
+    let chunk = settled.map((l) => `${l.speaker}: ${l.text}`).join("\n");
+    if (chunk.length > MAX_CHARS_PER_TICK) chunk = chunk.slice(-MAX_CHARS_PER_TICK);
+
+    stats.ticks += 1;
+    setStatus("extracting…", "warn");
+
+    let extraction = null;
+    try {
+      extraction = await extractFromChunk(chunk);
+    } catch (err) {
+      stats.failures += 1;
+      setStatus(`extraction failed: ${err}`, "bad");
+      logToCollector({ event: "extract-error", error: String(err) });
+      return;
+    }
+
+    if (!extraction) {
+      stats.failures += 1;
+      setStatus("model returned unparseable output", "bad");
+      logToCollector({ event: "parse-failure" });
+      return;
+    }
+
+    const added =
+      mergeInto(note.topics, extraction.topics) +
+      mergeInto(note.decisions, extraction.decisions) +
+      mergeInto(note.actions, extraction.actions) +
+      mergeInto(note.questions, extraction.questions) +
+      mergeInto(note.keywords, extraction.keywords, { keywords: true });
+
+    stats.extracted += added;
+    setStatus(`ok · ${stats.lastLatencyMs}ms`, "ok");
+    logToCollector({
+      event: "tick",
+      lines: settled.length,
+      chars: chunk.length,
+      added,
+      latencyMs: stats.lastLatencyMs,
+    });
+
+    render();
+  } finally {
+    ticking = false;
   }
-
-  if (!extraction) {
-    stats.failures += 1;
-    setStatus("model returned unparseable output", "bad");
-    logToCollector({ event: "parse-failure" });
-    return;
-  }
-
-  const added =
-    mergeInto(note.topics, extraction.topics) +
-    mergeInto(note.decisions, extraction.decisions) +
-    mergeInto(note.actions, extraction.actions) +
-    mergeInto(note.questions, extraction.questions) +
-    mergeInto(note.keywords, extraction.keywords, { keywords: true });
-
-  stats.extracted += added;
-  setStatus(`ok · ${stats.lastLatencyMs}ms`, "ok");
-  logToCollector({
-    event: "tick",
-    lines: settled.length,
-    chars: chunk.length,
-    added,
-    latencyMs: stats.lastLatencyMs,
-  });
-
-  render();
 }
 
 // ---------------------------------------------------------------------------
