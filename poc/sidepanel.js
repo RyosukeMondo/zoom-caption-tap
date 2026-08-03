@@ -34,6 +34,23 @@
 const TICK_MS = 30000;
 const MAX_CHARS_PER_TICK = 4000;
 
+// "聞き逃した" shows the last RECALL_WINDOW_MS of transcript — long enough to
+// catch a missed sentence, short enough to stay skimmable in a narrow panel.
+const RECALL_WINDOW_MS = 90000;
+
+// Thresholds for flagging a speaker who has gone quiet. Not a claim about
+// what silence means (on mute? listening? gone?) — just a visual nudge.
+const SILENCE_WARN_MS = 5 * 60000;
+const SILENCE_BAD_MS = 10 * 60000;
+
+// Refreshes only the "elapsed since last spoke" badges. Deliberately separate
+// from TICK_MS: tick() only calls render() when new lines settle, so on a
+// quiet stretch (nobody talking) the badges would otherwise freeze instead of
+// counting up. This timer touches no chrome.runtime API, no model, no
+// rawTranscript — it just re-reads Date.now() against data tick() already
+// recorded, so it cannot race or disturb the extraction loop.
+const SPEAKER_REFRESH_MS = 5000;
+
 // Deliberately flat: every field is an array of plain strings. Nested objects
 // and richer schemas are measurably less reliable on a model this small.
 const EXTRACTION_SCHEMA = {
@@ -86,6 +103,57 @@ const note = {
 const rawTranscript = [];
 
 const stats = { ticks: 0, extracted: 0, failures: 0, lastLatencyMs: 0 };
+
+// ---------------------------------------------------------------------------
+// Timeline, per-speaker stats, and recall — all pure derived views over
+// rawTranscript. None of this feeds back into the model or the extraction
+// loop; it only reads what tick() already captured.
+// ---------------------------------------------------------------------------
+
+/**
+ * Wall-clock time of the first settled line, used as the zero point for
+ * "elapsed since meeting start". Chosen over "when 開始 was pressed" because
+ * the button can be pressed before anyone has said a word, or after joining a
+ * meeting already in progress — either way the button-press instant is not
+ * the meeting's start. The first real utterance is the earliest moment this
+ * extension can actually vouch for.
+ */
+let meetingStartAt = null;
+
+/**
+ * speaker -> { utterances, chars, lastAt }. Maintained incrementally as lines
+ * settle in tick(), never recomputed from rawTranscript — that keeps it
+ * O(new lines) per tick regardless of how long the meeting has run.
+ *
+ * There is no "minutes spoken" field here on purpose: captions give text, not
+ * audio duration, so a per-speaker speaking-time figure would be invented.
+ * Utterance count, character count, and recency are the honest numbers this
+ * data actually supports.
+ */
+const speakerStats = new Map();
+let speakerRefreshTimer = null;
+
+/**
+ * How many of rawTranscript's lines have already been appended to the
+ * timeline DOM. Lets the timeline catch up in one pass on open instead of
+ * being rebuilt from scratch on every render() — rebuilding is O(n) per call
+ * and O(n²) over a whole meeting; appending only what's new is O(n) total.
+ */
+let timelineRenderedCount = 0;
+
+/** Formats milliseconds as M:SS, or H:MM:SS once an hour has passed. */
+function formatElapsed(ms) {
+  // Math.max(0, NaN) is NaN, so a missing `at` would render "NaN:NaN" at the
+  // user rather than failing loudly. Every line should carry one, but this is
+  // display code — degrade to a dash instead of showing garbage.
+  if (!Number.isFinite(ms)) return "—";
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
 
 // Normalising for dedup. Japanese has no word spacing, so strip punctuation and
 // whitespace and compare the residue.
@@ -336,7 +404,19 @@ async function tick() {
       return;
     }
 
-    for (const line of settled) rawTranscript.push(line);
+    for (const line of settled) {
+      rawTranscript.push(line);
+
+      // settled is already sorted by `at` ascending (background.js's
+      // takeSettledLines()), so the first line ever pushed is the earliest.
+      if (meetingStartAt == null) meetingStartAt = line.at;
+
+      const stat = speakerStats.get(line.speaker) ?? { utterances: 0, chars: 0, lastAt: 0 };
+      stat.utterances += 1;
+      stat.chars += line.text.length;
+      stat.lastAt = Math.max(stat.lastAt, line.at);
+      speakerStats.set(line.speaker, stat);
+    }
 
     let chunk = settled.map((l) => `${l.speaker}: ${l.text}`).join("\n");
     if (chunk.length > MAX_CHARS_PER_TICK) chunk = chunk.slice(-MAX_CHARS_PER_TICK);
@@ -455,12 +535,109 @@ function renderKeywords() {
   );
 }
 
+/** speakerStats.size is small (one entry per meeting participant), so this is
+ *  cheap to rebuild in full on every call — unlike the timeline, it never
+ *  needs incremental appends. */
+function renderSpeakers() {
+  const el = $("speakers");
+  if (!speakerStats.size) {
+    el.replaceChildren(
+      Object.assign(document.createElement("li"), { className: "empty", textContent: "—" }),
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const rows = [...speakerStats.entries()]
+    .map(([speaker, s]) => ({ speaker, ...s, silenceMs: now - s.lastAt }))
+    // Longest silence first — the point of this panel is spotting who has
+    // gone quiet, not celebrating who has talked the most.
+    .sort((a, b) => b.silenceMs - a.silenceMs);
+
+  el.replaceChildren(
+    ...rows.map((r) => {
+      const li = document.createElement("li");
+
+      const label = document.createElement("span");
+      label.textContent = `${r.speaker}（発言${r.utterances}回・${r.chars}文字）`;
+
+      const badge = document.createElement("span");
+      badge.className =
+        "badge " +
+        (r.silenceMs >= SILENCE_BAD_MS
+          ? "silence-bad"
+          : r.silenceMs >= SILENCE_WARN_MS
+            ? "silence-warn"
+            : "silence-ok");
+      badge.textContent = `${formatElapsed(r.silenceMs)}前`;
+
+      li.append(label, badge);
+      return li;
+    }),
+  );
+}
+
+/** Shared row renderer for the timeline and the recall panel: elapsed time
+ *  since meeting start, then "speaker: text". textContent/createTextNode
+ *  only — this is untrusted meeting text, never innerHTML. */
+function timelineLineNode(line) {
+  const li = document.createElement("li");
+
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = meetingStartAt == null ? "" : formatElapsed(line.at - meetingStartAt);
+
+  li.append(ts, document.createTextNode(`${line.speaker}: ${line.text}`));
+  return li;
+}
+
+/** Appends whatever rawTranscript lines haven't been rendered yet. Safe to
+ *  call as often as you like — a no-op once the timeline is caught up. */
+function appendNewTimelineLines() {
+  if (timelineRenderedCount >= rawTranscript.length) return;
+  const el = $("timeline");
+  if (timelineRenderedCount === 0) el.replaceChildren(); // drop the "—" placeholder
+  const frag = document.createDocumentFragment();
+  for (let i = timelineRenderedCount; i < rawTranscript.length; i++) {
+    frag.append(timelineLineNode(rawTranscript[i]));
+  }
+  el.append(frag);
+  timelineRenderedCount = rawTranscript.length;
+}
+
+/** The timeline can hold thousands of lines over a long meeting, so it is
+ *  only ever built while <details> is open — closed, render() skips it
+ *  entirely at zero cost. */
+function renderTimelineIfOpen() {
+  if ($("timeline-details").open) appendNewTimelineLines();
+}
+
+/** Snapshot of the last RECALL_WINDOW_MS, recomputed fresh each time the
+ *  panel is opened. The window is small and bounded, so this stays cheap no
+ *  matter how long rawTranscript has grown. */
+function renderRecall() {
+  const cutoff = Date.now() - RECALL_WINDOW_MS;
+  const recent = rawTranscript.filter((l) => l.at >= cutoff);
+
+  const el = $("recall-list");
+  if (!recent.length) {
+    el.replaceChildren(
+      Object.assign(document.createElement("li"), { className: "empty", textContent: "—" }),
+    );
+    return;
+  }
+
+  el.replaceChildren(...recent.map(timelineLineNode));
+}
+
 function render() {
   renderBucket("topics", note.topics);
   renderBucket("decisions", note.decisions);
   renderBucket("actions", note.actions);
   renderBucket("questions", note.questions);
   renderKeywords();
+  renderSpeakers();
+  renderTimelineIfOpen();
 
   $("tickinfo").textContent =
     `ticks ${stats.ticks} · items ${stats.extracted} · fails ${stats.failures} · ` +
@@ -553,11 +730,16 @@ $("start").addEventListener("click", async () => {
   $("stop").disabled = false;
   tick();
   timer = setInterval(tick, TICK_MS);
+  // Independent of tick()/TICK_MS — see SPEAKER_REFRESH_MS above. Keeps the
+  // "elapsed since last spoke" badges counting up even through a quiet
+  // stretch, when tick() itself has nothing new to do.
+  speakerRefreshTimer = setInterval(renderSpeakers, SPEAKER_REFRESH_MS);
 });
 
 $("stop").addEventListener("click", () => {
   running = false;
   clearInterval(timer);
+  clearInterval(speakerRefreshTimer);
   $("start").disabled = false;
   $("stop").disabled = true;
   setStatus("stopped");
@@ -577,6 +759,25 @@ $("export").addEventListener("click", async () => {
     a.click();
     URL.revokeObjectURL(url);
   }
+});
+
+// "聞き逃した" is a plain toggle over already-captured data: one click opens a
+// fresh snapshot of the last RECALL_WINDOW_MS, a second click closes it. No
+// message to the background page, no model call — it cannot disturb tick().
+$("recall-btn").addEventListener("click", () => {
+  const panel = $("recall-panel");
+  if (panel.hidden) {
+    renderRecall();
+    panel.hidden = false;
+  } else {
+    panel.hidden = true;
+  }
+});
+
+// Opening the timeline is the one moment it needs to catch up on lines that
+// arrived while it was closed (renderTimelineIfOpen() skips it otherwise).
+$("timeline-details").addEventListener("toggle", (e) => {
+  if (e.target.open) appendNewTimelineLines();
 });
 
 checkAvailability();

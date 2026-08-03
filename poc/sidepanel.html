@@ -77,17 +77,66 @@
   }
   .chip:hover { text-decoration: underline; }
 
+  /* 聞き逃した panel: a snapshot, not a permanent section, so it reads as an
+     overlay rather than another item in the running list of headings. */
+  #recall-panel {
+    margin: 8px 0 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--chip);
+  }
+  #recall-panel h2 { margin-top: 0; border-bottom: none; padding-bottom: 0; }
+  #recall-panel ul { margin-top: 4px; }
+
+  /* Elapsed-time prefix, shared by the timeline and the recall panel. */
+  .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
+
+  #speakers { padding-left: 0; }
+  #speakers li {
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .silence-ok { color: var(--ok); }
+  .silence-warn { color: var(--warn); }
+  .silence-bad { color: var(--bad); }
+
+  /* Timeline is collapsed by default: a long meeting holds thousands of
+     lines, and the panel is narrow, so it stays out of the way until asked
+     for and scrolls internally rather than stretching the page. */
+  details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 14px 0 4px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 3px;
+  }
+  #timeline { max-height: 240px; overflow-y: auto; margin-top: 6px; }
+  #timeline li { font-size: 12px; }
+
   footer { margin-top: 16px; font-size: 11px; color: var(--muted); }
 </style>
 
 <header>
   <button id="start">▶ 開始</button>
   <button id="stop" disabled>■ 停止</button>
+  <button id="recall-btn">⏪ 聞き逃した</button>
   <button id="export">⧉ Markdown</button>
 </header>
 
 <div id="status">…</div>
 <div id="tickinfo"></div>
+
+<div id="recall-panel" hidden>
+  <h2>聞き逃した内容（直近90秒）</h2>
+  <ul id="recall-list"></ul>
+</div>
 
 <h2>議題</h2>
 <ul id="topics"></ul>
@@ -103,6 +152,14 @@
 
 <h2>キーワード</h2>
 <div id="keywords"></div>
+
+<h2>発言状況（最終発言からの経過）</h2>
+<ul id="speakers"></ul>
+
+<details id="timeline-details">
+  <summary>タイムライン（全発言・会議開始からの経過時間）</summary>
+  <ul id="timeline"><li class="empty">—</li></ul>
+</details>
 
 <footer>
   30秒ごとに確定した字幕のみを Gemini Nano で抽出し、蓄積します。<br />
