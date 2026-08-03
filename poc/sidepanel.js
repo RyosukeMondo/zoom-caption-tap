@@ -201,20 +201,56 @@ async function checkAvailability() {
 async function ensureSession() {
   if (baseSession) return baseSession;
 
-  const params = await LanguageModel.params();
+  // Re-check fresh rather than trust the caller's snapshot: the state can
+  // change between checkAvailability() and here, and params() must never be
+  // called unless a model is actually resident on the device.
+  const availability = await LanguageModel.availability(MODEL_OPTIONS);
 
-  baseSession = await LanguageModel.create({
+  const createOptions = {
     ...MODEL_OPTIONS,
-    // Low temperature: this is extraction, not writing. We want it boring.
-    temperature: Math.min(0.3, params.maxTemperature),
-    topK: params.defaultTopK,
     initialPrompts: [{ role: "system", content: SYSTEM_PROMPT }],
     monitor(m) {
       m.addEventListener("downloadprogress", (e) => {
         setStatus(`downloading model: ${Math.round(e.loaded * 100)}%`, "warn");
       });
     },
-  });
+  };
+
+  if (availability === "available") {
+    const params = await LanguageModel.params();
+    if (!params) {
+      // Defensive: "available" should mean resident, but if the browser still
+      // hands back null, fail loudly instead of guessing at temperature/topK.
+      throw new Error(
+        "端末内のAIモデルの準備がまだ完了していません。chrome://on-device-internals で" +
+          "モデルの状態を確認し、しばらく待ってからもう一度お試しください。",
+      );
+    }
+    // Low temperature: this is extraction, not writing. We want it boring.
+    createOptions.temperature = Math.min(0.3, params.maxTemperature);
+    createOptions.topK = params.defaultTopK;
+  }
+  // Otherwise ("downloadable" / "downloading"): no model is resident yet, so
+  // there are no params to read. create() below triggers or joins the
+  // download and resolves once the model is ready.
+
+  baseSession = await LanguageModel.create(createOptions);
+
+  if (createOptions.temperature === undefined) {
+    // We got here through the download path, so create() used the browser's
+    // default sampling — which is tuned for writing, not extraction. Now that
+    // the model is resident, params() is readable: redo the session with the
+    // boring settings. Costs one extra create(), once, on first run only.
+    const params = await LanguageModel.params();
+    if (params) {
+      baseSession.destroy();
+      baseSession = await LanguageModel.create({
+        ...createOptions,
+        temperature: Math.min(0.3, params.maxTemperature),
+        topK: params.defaultTopK,
+      });
+    }
+  }
 
   setStatus(
     `session ready (context ${baseSession.contextUsage}/${baseSession.contextWindow})`,
@@ -457,18 +493,49 @@ function buildMarkdown() {
 $("start").addEventListener("click", async () => {
   // Model creation must happen under a user gesture when a download is needed,
   // which is exactly why starting is a button and not an automatic action.
+  // Disabled immediately so a second click can't race a download/session
+  // already in flight; every early-return path below re-enables it.
+  $("start").disabled = true;
+
   const availability = await checkAvailability();
-  if (availability === "unavailable") return;
+
+  if (availability === "unavailable") {
+    setStatus(
+      "この端末では内蔵AIが使えません。chrome://on-device-internals でモデルの状態を確認し、" +
+        "Chrome のバージョンが138以上か、ディスクの空き容量が22GB以上あるかを確認してください。",
+      "bad",
+    );
+    $("start").disabled = false;
+    return;
+  }
+
+  if (availability === "downloading") {
+    setStatus(
+      "AIモデルのダウンロードが別ですでに進行中です。完了するまで待ってから、" +
+        "もう一度「▶ 開始」を押してください。",
+      "warn",
+    );
+    $("start").disabled = false;
+    return;
+  }
+
+  if (availability === "downloadable") {
+    setStatus(
+      "AIモデル（約2GB）のダウンロードを開始します。完了するまで Chrome を閉じずに" +
+        "お待ちください。",
+      "warn",
+    );
+  }
 
   try {
     await ensureSession();
   } catch (err) {
-    setStatus(`session failed: ${err}`, "bad");
+    setStatus(`session failed: ${err} — もう一度「▶ 開始」を押してください。`, "bad");
+    $("start").disabled = false;
     return;
   }
 
   running = true;
-  $("start").disabled = true;
   $("stop").disabled = false;
   tick();
   timer = setInterval(tick, TICK_MS);

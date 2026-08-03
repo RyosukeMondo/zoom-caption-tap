@@ -580,6 +580,24 @@
 </details>
 
 <details>
+<summary>「▶ 開始」を押すと session failed: … と出る</summary>
+<p>
+  端末内蔵の AI モデル（Gemini Nano）がまだダウンロードされていない、
+  またはダウンロードが完了していない状態です。
+  以下を順に確認してください。
+</p>
+<ul>
+  <li><code>chrome://on-device-internals</code> を開き、モデルのダウンロードが完了しているか確認する</li>
+  <li>Chrome のバージョンが 138 以上か（<code>chrome://version</code>）</li>
+  <li>ハードディスクの空き容量が 22 GB 以上あるか</li>
+  <li>従量制ではない通信回線を使っているか（モデルのダウンロードには時間がかかります）</li>
+</ul>
+<p>
+  ダウンロードが完了したら、もう一度「▶ 開始」を押してください。
+</p>
+</details>
+
+<details>
 <summary>拡張機能を入れ直したい・消したい</summary>
 <p>
   <code>chrome://extensions</code> を開き、
