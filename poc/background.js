@@ -334,6 +334,20 @@ const lines = new Map();
 // is not a sentence, and the model will faithfully summarise the noise.
 const SETTLE_MS = 8000;
 
+// How long a delivered line sticks around after it last changed, before it is
+// dropped from `lines` entirely. Without this the map grows for the whole
+// meeting (it is only ever added to or bulk-cleared by the popup's manual
+// "clear"). 10 minutes is a large multiple of SETTLE_MS (75x) — Zoom's own
+// corrections land within seconds of a segment finalizing, not minutes later
+// — so this is not tuned close to the edge of clipping a real correction.
+// It also does not need to be watertight: if Zoom *did* somehow revise a
+// line after it was pruned, upsert() below just treats it as a brand-new
+// entry (prev is gone) and it settles and re-delivers normally — pruning can
+// only cost an extra, harmless re-delivery, never silently drop a
+// correction. The window is chosen for a tight memory bound, not because a
+// larger one would be unsafe.
+const PRUNE_AFTER_MS = 10 * 60 * 1000;
+
 function upsert(msg) {
   const prev = lines.get(msg.messageId);
   if (prev && prev.messageVersion > msg.messageVersion) return false;
@@ -342,7 +356,16 @@ function upsert(msg) {
   lines.set(msg.messageId, {
     ...msg,
     lastChangedAt: textChanged ? Date.now() : prev.lastChangedAt,
-    deliveredToSecretary: prev?.deliveredToSecretary ?? false,
+    // Carrying deliveredToSecretary forward unconditionally would mean a
+    // post-delivery correction (Zoom revises a line's text after it already
+    // settled and shipped) is stored here but never re-offered to
+    // takeSettledLines() — the secretary keeps the stale text forever. Reset
+    // it whenever the text actually changed, even for an already-delivered
+    // line, so a correction gets to settle and re-emit. This does not
+    // reintroduce the duplicate-caption bug: the re-emitted line still
+    // carries its original messageId, and sidepanel.js's rawTranscript write
+    // replaces the existing entry for that messageId instead of appending.
+    deliveredToSecretary: textChanged ? false : (prev?.deliveredToSecretary ?? false),
   });
   return !prev;
 }
@@ -352,8 +375,14 @@ function takeSettledLines() {
   const now = Date.now();
   const ready = [];
 
-  for (const line of lines.values()) {
-    if (line.deliveredToSecretary) continue;
+  for (const [id, line] of lines) {
+    if (line.deliveredToSecretary) {
+      // Prune here rather than on a timer: takeSettledLines() already walks
+      // every line once per tick, so folding pruning into that pass costs
+      // nothing extra and needs no separate scheduler.
+      if (now - line.lastChangedAt >= PRUNE_AFTER_MS) lines.delete(id);
+      continue;
+    }
     if (now - line.lastChangedAt < SETTLE_MS) continue;
     line.deliveredToSecretary = true;
     ready.push(line);

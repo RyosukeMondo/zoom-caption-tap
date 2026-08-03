@@ -99,8 +99,18 @@ const note = {
   keywords: [],
 };
 
-/** Raw transcript, append-only. The ground truth that survives any model error. */
+/** Raw transcript, append-ordered. The ground truth that survives any model error. */
 const rawTranscript = [];
+
+/**
+ * messageId -> index into rawTranscript. background.js can re-emit a line
+ * whose text was corrected after it already settled and shipped once (see
+ * upsert() there) — it carries the same messageId as before. This index lets
+ * tick() tell "new utterance" from "revision of one already in the
+ * transcript" in O(1) instead of scanning rawTranscript per settled line,
+ * which matters once a long meeting holds thousands of entries.
+ */
+const rawTranscriptIndex = new Map();
 
 const stats = { ticks: 0, extracted: 0, failures: 0, lastLatencyMs: 0 };
 
@@ -405,10 +415,61 @@ async function tick() {
     }
 
     for (const line of settled) {
+      const existingIndex = line.messageId != null ? rawTranscriptIndex.get(line.messageId) : undefined;
+
+      if (existingIndex !== undefined) {
+        // A revision, not a new utterance: background.js only re-emits a
+        // messageId that already settled once before when its text changed.
+        // Replace in place so the append-only transcript never carries the
+        // same utterance twice (that was the exact duplicate-caption bug
+        // fixed in c81670b).
+        const prevLine = rawTranscript[existingIndex];
+        rawTranscript[existingIndex] = line;
+
+        const stat = speakerStats.get(prevLine.speaker);
+        if (stat) {
+          if (prevLine.speaker === line.speaker) {
+            // Same utterance, corrected text: move the character count by
+            // the delta only. utterances must not change — this is not a
+            // new thing being said.
+            stat.chars += line.text.length - prevLine.text.length;
+            stat.lastAt = Math.max(stat.lastAt, line.at);
+          } else {
+            // Rare: ASR reassigned the speaker on revision. Move the whole
+            // utterance across speakers rather than leave either side's
+            // counts wrong.
+            stat.utterances -= 1;
+            stat.chars -= prevLine.text.length;
+            const newStat = speakerStats.get(line.speaker) ?? { utterances: 0, chars: 0, lastAt: 0 };
+            newStat.utterances += 1;
+            newStat.chars += line.text.length;
+            newStat.lastAt = Math.max(newStat.lastAt, line.at);
+            speakerStats.set(line.speaker, newStat);
+          }
+        }
+
+        // The timeline is <details>-gated (renderTimelineIfOpen), so most of
+        // the time this row was never rendered and there is nothing to fix
+        // up — appendNewTimelineLines() will pick up the corrected text the
+        // first time it does render. But if the row already made it to the
+        // DOM, appendNewTimelineLines() has no way to revisit an index it
+        // already passed (it only ever appends), so patch that row directly
+        // instead of leaving stale text on screen.
+        if (existingIndex < timelineRenderedCount) {
+          const timelineEl = $("timeline");
+          const oldNode = timelineEl.children[existingIndex];
+          if (oldNode) timelineEl.replaceChild(timelineLineNode(line), oldNode);
+        }
+
+        continue;
+      }
+
+      rawTranscriptIndex.set(line.messageId, rawTranscript.length);
       rawTranscript.push(line);
 
       // settled is already sorted by `at` ascending (background.js's
       // takeSettledLines()), so the first line ever pushed is the earliest.
+      // Only a genuinely new line can move this — a revision never does.
       if (meetingStartAt == null) meetingStartAt = line.at;
 
       const stat = speakerStats.get(line.speaker) ?? { utterances: 0, chars: 0, lastAt: 0 };
