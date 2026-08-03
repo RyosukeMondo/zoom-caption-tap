@@ -66,8 +66,201 @@ chrome.runtime.onInstalled.addListener(() => {
   syncRegistration();
 });
 chrome.runtime.onStartup.addListener(syncRegistration);
-chrome.permissions.onAdded.addListener(syncRegistration);
+chrome.permissions.onAdded.addListener((perms) => {
+  // Fires whether the grant came from our popup's button or from Chrome's own
+  // "read and change data on zoom.us" UI (chrome://extensions site access).
+  // Either way, declarative registration below only covers *future*
+  // navigations — also sweep tabs that are open right now, so a Zoom tab that
+  // predates the grant does not need a manual reload to start working.
+  syncRegistration();
+  if (perms.origins?.some((origin) => ZOOM_MATCHES.includes(origin))) {
+    activateOpenZoomTabs();
+  }
+});
 chrome.permissions.onRemoved.addListener(syncRegistration);
+
+// ---------------------------------------------------------------------------
+// Imperative activation for already-open tabs
+// ---------------------------------------------------------------------------
+//
+// registerContentScripts() (above) only affects documents that load *after*
+// registration — Chrome has no API to retroactively run a document_start
+// script into a page that already finished loading. That is exactly the bug:
+// a Zoom tab opened before the optional permission was granted never gets
+// hook.js/bridge.js until it is reloaded. This section injects into such tabs
+// directly with chrome.scripting.executeScript the moment permission exists.
+//
+// Idempotency: this can be triggered from more than one place at once (the
+// popup's button, permissions.onAdded, a proactive check on popup-open) and
+// the button is safe to click again even once a tab is already active. Two
+// layers make repeated/concurrent activation of the same tab a no-op:
+//
+//   1. bridgeReadyAt (below) — background's own record of "some frame in this
+//      tab has already confirmed it's alive", populated from bridge.js's
+//      unconditional "bridge-ready" ping. If we already have that, we skip
+//      the tab entirely. This is what makes declarative injection (page load)
+//      and imperative injection (this file) mutually aware of each other.
+//   2. A window[flag] sentinel, tested-and-set by a tiny probe function run
+//      in the target frame *before* hook.js/bridge.js are ever injected.
+//      Reading and writing window[flag] happens synchronously inside that
+//      frame's single JS thread, so however many activation calls race each
+//      other from the service worker side, only the one whose probe runs
+//      first in a given frame ever sees the flag unset — every other racer
+//      sees it already true and never injects the file into that frame.
+//      This covers the gap before layer 1 has any evidence yet (e.g. two
+//      "有効にする" clicks moments apart, before either has produced a
+//      bridge-ready ping).
+//
+// Together: hook.js/bridge.js are files this code does not own and cannot
+// edit to add their own guard, so the guard lives entirely on the injector
+// side instead — every call path funnels through activateTab(), and no file
+// is ever pushed into a frame that isn't freshly claimed by its own probe.
+
+const MAIN_FLAG = "__zoomTapMainInjected";
+const ISOLATED_FLAG = "__zoomTapIsolatedInjected";
+
+/** tabId -> time of the most recent "bridge-ready" ping from that tab. */
+const bridgeReadyAt = new Map();
+
+chrome.tabs.onRemoved.addListener((tabId) => bridgeReadyAt.delete(tabId));
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  // A fresh navigation tears down whatever was injected before it (both the
+  // window[flag] sentinel and any running listeners), so forget the old
+  // liveness signal — the next activation for this tab must start clean.
+  if (changeInfo.status === "loading") bridgeReadyAt.delete(tabId);
+});
+
+/**
+ * Claims every not-yet-claimed frame of `tabId` in `world`, then injects
+ * `file` only into the frames it claimed. Returns how many frames were freshly
+ * injected, or an error if either step failed outright.
+ */
+async function probeAndInject(tabId, world, flag, file) {
+  let probe;
+  try {
+    probe = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world,
+      func: (flagName) => {
+        if (window[flagName]) return false;
+        window[flagName] = true;
+        return true;
+      },
+      args: [flag],
+    });
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+
+  const freshFrameIds = probe.filter((r) => r.result === true).map((r) => r.frameId);
+  if (!freshFrameIds.length) return { ok: true, injectedFrames: 0 };
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: freshFrameIds },
+      world,
+      files: [file],
+    });
+    return { ok: true, injectedFrames: freshFrameIds.length };
+  } catch (err) {
+    // The claim didn't pay off — release it so a retry can claim these frames
+    // again, instead of permanently believing they are already covered.
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, frameIds: freshFrameIds },
+        world,
+        func: (flagName) => {
+          window[flagName] = false;
+        },
+        args: [flag],
+      });
+    } catch {
+      /* best-effort rollback */
+    }
+    return { ok: false, error: String(err) };
+  }
+}
+
+/** Resolves true once bridgeReadyAt[tabId] is newer than `sinceAt`, or false on timeout. */
+function waitForBridgeReady(tabId, sinceAt, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function poll() {
+      const at = bridgeReadyAt.get(tabId);
+      if (at && at >= sinceAt) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+      setTimeout(poll, 150);
+    })();
+  });
+}
+
+/**
+ * Ensures one tab is activated. Zoom's own app/store readiness is hook.js's
+ * problem, not ours — it already polls for Redux and falls back to a fiber
+ * walk for a store built before injection. Our only job is getting hook.js
+ * and bridge.js running in the tab's frames at all, exactly once each.
+ */
+async function activateTab(tab) {
+  if (tab.id == null) {
+    return { tabId: null, title: tab.title, status: "failed", needsReload: false };
+  }
+
+  if (bridgeReadyAt.has(tab.id)) {
+    log("activate", { tabId: tab.id, url: tab.url, status: "already-active", via: "cache" });
+    return { tabId: tab.id, title: tab.title, status: "already-active", needsReload: false };
+  }
+
+  const startedAt = Date.now();
+  const main = await probeAndInject(tab.id, "MAIN", MAIN_FLAG, "hook.js");
+  const isolated = await probeAndInject(tab.id, "ISOLATED", ISOLATED_FLAG, "bridge.js");
+
+  if (!main.ok || !isolated.ok) {
+    log("activate", { tabId: tab.id, url: tab.url, status: "failed", main, isolated });
+    return { tabId: tab.id, title: tab.title, status: "failed", needsReload: true };
+  }
+
+  if (main.injectedFrames === 0 && isolated.injectedFrames === 0) {
+    // Every frame was already claimed — by declarative registration on page
+    // load, or by another activation call that won the race.
+    log("activate", { tabId: tab.id, url: tab.url, status: "already-active", via: "sentinel" });
+    return { tabId: tab.id, title: tab.title, status: "already-active", needsReload: false };
+  }
+
+  const ready = await waitForBridgeReady(tab.id, startedAt);
+  const status = ready ? "activated" : "uncertain";
+  log("activate", { tabId: tab.id, url: tab.url, status, main, isolated });
+  return { tabId: tab.id, title: tab.title, status, needsReload: !ready };
+}
+
+// Concurrent triggers (popup auto-check + a manual click, or two clicks close
+// together) collapse onto the same in-flight scan instead of running twice.
+let activateInFlight = null;
+
+async function activateOpenZoomTabs() {
+  if (activateInFlight) return activateInFlight;
+
+  activateInFlight = (async () => {
+    const tabs = await chrome.tabs.query({ url: ZOOM_MATCHES });
+    if (!tabs.length) return { noTabs: true, tabs: [] };
+    const results = [];
+    for (const tab of tabs) {
+      results.push(await activateTab(tab));
+    }
+    return { noTabs: false, tabs: results };
+  })();
+
+  try {
+    return await activateInFlight;
+  } finally {
+    activateInFlight = null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Log shipping
@@ -173,6 +366,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "hook-event") {
     const d = msg.detail;
 
+    // bridge.js pings this unconditionally as soon as it runs, whether it got
+    // there declaratively on page load or via activateTab()'s injection. It is
+    // the only evidence background has that a tab is genuinely live, so it
+    // feeds both activateTab()'s already-active short-circuit and
+    // waitForBridgeReady()'s activated-vs-uncertain verdict.
+    if (d.type === "bridge-ready" && sender.tab?.id != null) {
+      bridgeReadyAt.set(sender.tab.id, d.at ?? Date.now());
+    }
+
     if (d.type === "captions") {
       const fresh = d.messages.filter(upsert).length;
       log("captions", {
@@ -228,6 +430,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await syncRegistration();
         sendResponse({ granted });
       });
+      return true;
+    case "activate-zoom-tabs":
+      // Safe to call repeatedly: activateOpenZoomTabs() collapses concurrent
+      // callers onto one scan, and per-tab claiming makes a re-run a no-op.
+      activateOpenZoomTabs()
+        .then((res) => sendResponse({ ok: true, ...res }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    case "reload-tab":
+      chrome.tabs
+        .reload(msg.tabId)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
   }
 });
