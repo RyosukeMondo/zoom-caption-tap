@@ -122,7 +122,7 @@ $grant.addEventListener("click", async () => {
     await refresh();
     return;
   }
-  await chrome.runtime.sendMessage({ type: "request-zoom-permission" });
+  await chrome.runtime.sendMessage({ type: "sync-registration" });
   // Registration only covers future navigations, so sweep tabs that are
   // already open — the whole point is that the user should not have to reload.
   setActivationNote("Zoomタブを有効化しています…", { sticky: true });

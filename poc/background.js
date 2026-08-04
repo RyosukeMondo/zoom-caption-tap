@@ -42,7 +42,7 @@ const SCRIPTS = [
   },
 ];
 
-async function syncRegistration() {
+async function syncRegistrationUnsafe() {
   const granted = await chrome.permissions.contains({ origins: ZOOM_MATCHES });
   const existing = await chrome.scripting.getRegisteredContentScripts();
   const existingIds = new Set(existing.map((s) => s.id));
@@ -56,9 +56,44 @@ async function syncRegistration() {
   }
 
   const missing = SCRIPTS.filter((s) => !existingIds.has(s.id));
-  if (missing.length) await chrome.scripting.registerContentScripts(missing);
+  if (missing.length) {
+    try {
+      await chrome.scripting.registerContentScripts(missing);
+    } catch (err) {
+      // "Duplicate script ID" means someone registered between our read of
+      // getRegisteredContentScripts() and this write. The serialization below
+      // rules that out within one service-worker instance, but not across a
+      // worker being torn down and restarted mid-flight. The desired end state
+      // is "these scripts are registered", which is already true — so adopt it
+      // rather than failing. updateContentScripts also repairs the case where
+      // an entry exists under our ID but with stale definitions (e.g. after an
+      // extension update changed SCRIPTS).
+      if (!String(err).includes("Duplicate script ID")) throw err;
+      log("registration", { granted: true, raced: true, ids: missing.map((s) => s.id) });
+      await chrome.scripting.updateContentScripts(missing);
+    }
+  }
   log("registration", { granted: true, registered: wantedIds });
   return true;
+}
+
+// syncRegistration() is reachable from onInstalled, onStartup, permissions
+// onAdded/onRemoved, and the popup's sync-registration message — and
+// granting permission fires several of those at once. The read-then-register
+// body above is a check-then-act sequence with an await in the middle, so two
+// overlapping callers both saw an empty registration list and both tried to
+// register, throwing "Duplicate script ID" on the second. Chaining every call
+// onto one promise makes them run one after another instead of interleaving.
+// Callers still get their own result and their own errors; only the ordering
+// is shared.
+let registrationChain = Promise.resolve();
+
+function syncRegistration() {
+  const next = registrationChain.then(syncRegistrationUnsafe, syncRegistrationUnsafe);
+  // Keep the chain alive even if this link rejected, or one failure would
+  // wedge every future call behind a permanently rejected promise.
+  registrationChain = next.catch(() => {});
+  return next;
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -454,11 +489,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       ring.length = 0;
       sendResponse({ ok: true });
       return true;
-    case "request-zoom-permission":
-      chrome.permissions.request({ origins: ZOOM_MATCHES }).then(async (granted) => {
-        await syncRegistration();
-        sendResponse({ granted });
-      });
+    // The popup owns chrome.permissions.request() — it needs the user gesture,
+    // which a message round-trip loses. By the time we get here the grant has
+    // already happened, so this only ensures registration has caught up:
+    // permissions.onAdded fires it too, but nothing guarantees that listener
+    // has finished before the popup moves on to activating tabs.
+    case "sync-registration":
+      syncRegistration()
+        .then((granted) => sendResponse({ granted }))
+        .catch((err) => sendResponse({ granted: false, error: String(err) }));
       return true;
     case "activate-zoom-tabs":
       // Safe to call repeatedly: activateOpenZoomTabs() collapses concurrent
