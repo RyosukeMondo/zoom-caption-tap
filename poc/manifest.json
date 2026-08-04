@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Zoom Caption Tap (PoC)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Research PoC: read Zoom Web Client live-transcription captions from the page's own state, without a meeting bot.",
 
   "background": { "service_worker": "background.js" },

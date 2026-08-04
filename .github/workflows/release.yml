@@ -1,0 +1,60 @@
+# Builds the installable ZIP from poc/ and attaches it to the release.
+#
+# The docs site links to
+#   /releases/latest/download/zoom-caption-tap.zip
+# which GitHub resolves to whichever release is newest. That URL is only
+# trustworthy if every release actually carries an asset by that exact name —
+# a hand-uploaded zip is one forgotten step away from a 404 on the download
+# button, or worse, from silently serving a stale build. So it is built here.
+#
+# The zip contains the *contents* of poc/ at the top level, not a poc/ folder,
+# because Chrome's "Load unpacked" wants the directory holding manifest.json.
+# Nesting it one deeper is a classic install failure that looks like a broken
+# extension rather than a wrong folder choice.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets a release be re-packaged without moving the tag, e.g. if the upload
+  # failed rather than the build.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to package"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Sanity-check the payload
+        run: |
+          set -euo pipefail
+          test -f poc/manifest.json || { echo "poc/manifest.json missing"; exit 1; }
+          # A syntax error here ships an extension that fails to load with a
+          # message most users cannot act on. Cheap to catch at build time.
+          for f in poc/*.js; do node --check "$f"; done
+          # The tag should match the version users will see in chrome://extensions.
+          MANIFEST_VERSION="$(node -p "require('./poc/manifest.json').version")"
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if [ "v$MANIFEST_VERSION" != "$TAG" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match tag ($TAG)"
+            exit 1
+          fi
+
+      - name: Build zip
+        run: cd poc && zip -r ../zoom-caption-tap.zip . -x '*.DS_Store'
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: zoom-caption-tap.zip
