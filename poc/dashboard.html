@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>会議ダッシュボード — Meeting Secretary</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #e0e0e0;
+    --chip: #eef2ff;
+    --chip-fg: #3730a3;
+    --ok: #15803d;
+    --warn: #b45309;
+    --bad: #b91c1c;
+
+    /* Categorical palette for per-speaker identity (bar chart + timeline lanes).
+       Fixed hue ORDER, never cycled/reassigned — see dataviz color-formula.
+       Validated: adjacent-pair CVD ΔE >= 8, normal-vision ΔE >= 15, both modes. */
+    --cat-0: #2a78d6;
+    --cat-1: #eb6834;
+    --cat-2: #1baf7a;
+    --cat-3: #eda100;
+    --cat-4: #e87ba4;
+    --cat-5: #008300;
+    --cat-6: #4a3aa7;
+    --cat-7: #e34948;
+    --cat-other: #8a8a8a; /* 9th+ speaker folds into this muted "other" swatch */
+
+    --lane-label-width: 140px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e8e8e8;
+      --muted: #9a9a9a;
+      --line: #333;
+      --chip: #1e1b4b;
+      --chip-fg: #c7d2fe;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --bad: #f87171;
+
+      --cat-0: #3987e5;
+      --cat-1: #d95926;
+      --cat-2: #199e70;
+      --cat-3: #c98500;
+      --cat-4: #d55181;
+      --cat-5: #008300;
+      --cat-6: #9085e9;
+      --cat-7: #e66767;
+      --cat-other: #9a9a9a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font: 13px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    color: var(--fg);
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: var(--chip);
+    color: var(--chip-fg);
+    padding: 8px 14px;
+    z-index: 10;
+    border-radius: 0 0 6px 0;
+  }
+  .skip-link:focus { left: 0; }
+
+  button { font: inherit; color: inherit; }
+
+  #app { display: flex; align-items: flex-start; min-height: 100vh; }
+
+  /* --- Sidebar: meeting picker --- */
+  #sidebar {
+    width: 300px;
+    flex: none;
+    padding: 16px;
+    border-right: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+  #sidebar h1 {
+    font-size: 15px;
+    margin: 0 0 12px;
+  }
+  #meeting-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .meeting-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .meeting-item:hover { background: var(--chip); }
+  .meeting-item[aria-current="true"] {
+    background: var(--chip);
+    border-color: var(--chip-fg);
+  }
+  .meeting-item-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meeting-item-meta { display: block; font-size: 11px; color: var(--muted); }
+  #sidebar-empty { color: var(--muted); font-size: 12px; }
+
+  /* --- Main content --- */
+  #content { flex: 1; min-width: 0; padding: 20px 32px 60px; max-width: 1200px; }
+
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 28px 0 8px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+  }
+  h4 { font-size: 12px; margin: 0 0 6px; color: var(--chip-fg); }
+
+  .state-message {
+    color: var(--muted);
+    padding: 40px 0;
+    max-width: 480px;
+  }
+  .state-message strong { display: block; color: var(--fg); font-size: 15px; margin-bottom: 6px; }
+
+  /* Header meta row */
+  #meeting-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #meeting-meta div { display: flex; gap: 4px; }
+  #meeting-meta dt::after { content: "："; }
+  #meeting-meta dd { margin: 0; color: var(--fg); }
+
+  .inline-note {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 4px 0 0;
+  }
+
+  /* Estimate caveat callout — must be visible, not buried. */
+  .estimate-callout {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    border-radius: 4px;
+    background: var(--chip);
+    color: var(--fg);
+    font-size: 12px;
+  }
+  .estimate-callout strong { color: var(--warn); }
+
+  /* Speaker table */
+  #speaker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #speaker-table th, #speaker-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+  }
+  #speaker-table thead th { color: var(--muted); font-weight: 500; font-size: 11px; }
+  #speaker-table td, #speaker-table th[scope="row"] { font-variant-numeric: tabular-nums; }
+  #speaker-table th[scope="row"] { font-variant-numeric: initial; white-space: nowrap; }
+
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+    flex: none;
+  }
+  .swatch.cat-0 { background: var(--cat-0); }
+  .swatch.cat-1 { background: var(--cat-1); }
+  .swatch.cat-2 { background: var(--cat-2); }
+  .swatch.cat-3 { background: var(--cat-3); }
+  .swatch.cat-4 { background: var(--cat-4); }
+  .swatch.cat-5 { background: var(--cat-5); }
+  .swatch.cat-6 { background: var(--cat-6); }
+  .swatch.cat-7 { background: var(--cat-7); }
+  .swatch.cat-8 { background: var(--cat-other); }
+
+  .bar-cell { display: flex; align-items: center; gap: 8px; min-width: 220px; }
+  .bar-track { flex: 1; height: 14px; border-radius: 7px; background: var(--line); overflow: hidden; }
+  .bar-fill {
+    height: 100%;
+    /* Data-end (tip) rounded, baseline (left, origin) square — per mark spec. */
+    border-radius: 0 4px 4px 0;
+  }
+  .bar-fill.cat-0 { background: var(--cat-0); }
+  .bar-fill.cat-1 { background: var(--cat-1); }
+  .bar-fill.cat-2 { background: var(--cat-2); }
+  .bar-fill.cat-3 { background: var(--cat-3); }
+  .bar-fill.cat-4 { background: var(--cat-4); }
+  .bar-fill.cat-5 { background: var(--cat-5); }
+  .bar-fill.cat-6 { background: var(--cat-6); }
+  .bar-fill.cat-7 { background: var(--cat-7); }
+  .bar-fill.cat-8 { background: var(--cat-other); }
+  .bar-value { font-size: 11px; color: var(--muted); min-width: 52px; text-align: right; }
+
+  /* Timeline */
+  #timeline-section { --bucket-count: 60; }
+  #timeline-hint { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  #timeline-axis {
+    display: grid;
+    grid-template-columns: repeat(var(--bucket-count), 1fr);
+    margin-left: var(--lane-label-width);
+    height: 16px;
+    font-size: 10px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  #timeline-axis .tick { border-left: 1px solid var(--line); padding-left: 3px; white-space: nowrap; }
+
+  .lane-row { display: flex; align-items: stretch; margin-bottom: 2px; }
+  .lane-label {
+    width: var(--lane-label-width);
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding-right: 8px;
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .lane-label span.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane-cells {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(var(--bucket-count), 1fr);
+    gap: 1px;
+  }
+  .cell {
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+  }
+  .cell.empty { background: var(--line); opacity: 0.35; cursor: default; }
+  .cell.mark { cursor: pointer; }
+  .cell.mark:hover, .cell.mark:focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 1px;
+    position: relative;
+    z-index: 1;
+  }
+  .cell.mark.cat-0 { background: var(--cat-0); }
+  .cell.mark.cat-1 { background: var(--cat-1); }
+  .cell.mark.cat-2 { background: var(--cat-2); }
+  .cell.mark.cat-3 { background: var(--cat-3); }
+  .cell.mark.cat-4 { background: var(--cat-4); }
+  .cell.mark.cat-5 { background: var(--cat-5); }
+  .cell.mark.cat-6 { background: var(--cat-6); }
+  .cell.mark.cat-7 { background: var(--cat-7); }
+  .cell.mark.cat-8 { background: var(--cat-other); }
+
+  #timeline-detail {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--chip);
+  }
+  #timeline-detail ul { margin: 0; padding-left: 1.1em; max-height: 280px; overflow-y: auto; }
+  #timeline-detail li { font-size: 12px; margin-bottom: 4px; }
+  #timeline-detail .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
+  #timeline-detail .cap-note { color: var(--muted); font-size: 11px; margin-top: 6px; }
+
+  /* Note section */
+  .note-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px 24px;
+  }
+  .note-block ul { margin: 0; padding-left: 1.1em; }
+  .note-block li { margin-bottom: 3px; font-size: 12px; }
+  .empty { color: var(--muted); list-style: none; margin-left: -1.1em; }
+  #note-keywords { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--chip);
+    color: var(--chip-fg);
+    font-size: 12px;
+  }
+
+  /* Transcript */
+  details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #transcript-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 480px; overflow-y: auto; }
+  #transcript-list li { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  #transcript-list .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  #transcript-list .speaker { font-weight: 600; margin-right: 4px; }
+
+  @media (max-width: 780px) {
+    #app { flex-direction: column; }
+    #sidebar {
+      width: auto;
+      position: static;
+      max-height: 260px;
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+    }
+    #content { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+  <a class="skip-link" href="#content">メインコンテンツへ</a>
+  <div id="app">
+    <nav id="sidebar" aria-label="会議一覧">
+      <h1>会議ダッシュボード</h1>
+      <p id="sidebar-empty" hidden>アーカイブされた会議はまだありません。</p>
+      <ul id="meeting-list"></ul>
+    </nav>
+
+    <main id="content" tabindex="-1">
+      <div id="empty-state" class="state-message" hidden>
+        <strong>アーカイブされた会議はまだありません</strong>
+        サイドパネルで会議を録音・保存すると、ここに分析結果が表示されます。
+      </div>
+
+      <div id="not-found-state" class="state-message" hidden>
+        <strong>指定された会議が見つかりませんでした</strong>
+        削除されたか、URL が正しくない可能性があります。左の一覧から会議を選択してください。
+      </div>
+
+      <div id="meeting-view" hidden>
+        <header id="meeting-header">
+          <h2 id="m-title"></h2>
+          <dl id="meeting-meta">
+            <div><dt>日時</dt><dd id="m-datetime"></dd></div>
+            <div><dt>会議時間</dt><dd id="m-duration"></dd></div>
+            <div><dt>参加者数</dt><dd id="m-participants"></dd></div>
+            <div><dt>総発言数</dt><dd id="m-utterances"></dd></div>
+          </dl>
+          <p id="single-speaker-note" class="inline-note" hidden>発言者が1人のため、比較はありません。</p>
+        </header>
+
+        <p id="no-transcript-note" class="state-message" hidden>この会議の書き起こしは記録されていません。</p>
+
+        <section id="speaker-section">
+          <h3>発言者ごとの分析</h3>
+          <div class="estimate-callout">
+            <strong>※ 推定発言時間について：</strong>
+            この拡張機能は字幕（テキスト）のみを読み取り、音声は取得・解析しません。そのため「推定発言時間」は字幕のタイムスタンプから算出した<strong>目安</strong>であり、実際の発言時間を測定した値ではありません。
+          </div>
+          <table id="speaker-table">
+            <caption class="visually-hidden" style="position:absolute;left:-9999px;">
+              発言者ごとの推定発言時間（字幕タイムスタンプからの目安。実測ではありません）と発言統計
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">発言者</th>
+                <th scope="col">推定発言時間</th>
+                <th scope="col">発言回数</th>
+                <th scope="col">文字数</th>
+                <th scope="col">初回発言</th>
+                <th scope="col">最終発言</th>
+              </tr>
+            </thead>
+            <tbody id="speaker-tbody"></tbody>
+          </table>
+        </section>
+
+        <section id="timeline-section" aria-label="発言タイムライン">
+          <h3>タイムライン</h3>
+          <p id="timeline-hint">
+            話者ごとに発言のタイミングを時間軸上に表示します。マスにカーソルを合わせるか、クリック（またはキーボードで選択）すると、その時間帯の発言内容を表示します。
+          </p>
+          <div id="timeline-axis"></div>
+          <div id="timeline-grid"></div>
+          <div id="timeline-detail" hidden>
+            <h4 id="timeline-detail-title"></h4>
+            <ul id="timeline-detail-list"></ul>
+            <p id="timeline-detail-cap" class="cap-note" hidden></p>
+          </div>
+        </section>
+
+        <section id="note-section">
+          <h3>保存されたノート</h3>
+          <div class="note-grid">
+            <div class="note-block"><h4>議題</h4><ul id="note-topics"></ul></div>
+            <div class="note-block"><h4>決定事項</h4><ul id="note-decisions"></ul></div>
+            <div class="note-block"><h4>アクション</h4><ul id="note-actions"></ul></div>
+            <div class="note-block"><h4>未解決の質問</h4><ul id="note-questions"></ul></div>
+          </div>
+          <div class="note-block" style="margin-top:16px;">
+            <h4>キーワード</h4>
+            <div id="note-keywords"></div>
+          </div>
+        </section>
+
+        <section id="transcript-section">
+          <h3>書き起こし</h3>
+          <details id="transcript-details">
+            <summary>全文書き起こし（<span id="transcript-count">0</span>件）を表示</summary>
+            <ul id="transcript-list"></ul>
+          </details>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="archive.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

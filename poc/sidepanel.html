@@ -89,6 +89,39 @@
   #recall-panel h2 { margin-top: 0; border-bottom: none; padding-bottom: 0; }
   #recall-panel ul { margin-top: 4px; }
 
+  /* Review banner: same visual language as #recall-panel (an overlay, not a
+     permanent section) — shown only while viewing a saved meeting instead of
+     the live one. */
+  #review-banner {
+    margin: 8px 0 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--chip);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  #review-banner strong { color: var(--chip-fg); }
+  #review-title { flex: 1 1 auto; }
+
+  #past-meetings { padding-left: 0; }
+  #past-meetings li {
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+  }
+  #past-meetings li:hover { background: var(--chip); }
+  #past-meetings li:last-child { border-bottom: none; }
+  .pm-title { font-weight: 600; }
+  .pm-meta { color: var(--muted); font-size: 11px; flex: 1 1 auto; }
+  .pm-delete { margin-left: auto; flex: 0 0 auto; }
+
   /* Elapsed-time prefix, shared by the timeline and the recall panel. */
   .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
 
@@ -128,6 +161,7 @@
   <button id="stop" disabled>■ 停止</button>
   <button id="recall-btn">⏪ 聞き逃した</button>
   <button id="export">⧉ Markdown</button>
+  <button id="dashboard-btn">📊 ダッシュボード</button>
 </header>
 
 <div id="status">…</div>
@@ -136,6 +170,13 @@
 <div id="recall-panel" hidden>
   <h2>聞き逃した内容（直近90秒）</h2>
   <ul id="recall-list"></ul>
+</div>
+
+<div id="review-banner" hidden>
+  <strong>閲覧中:</strong>
+  <span id="review-title"></span>
+  <button id="resummarize-btn">🔁 再要約</button>
+  <button id="back-to-live-btn">▶ ライブに戻る</button>
 </div>
 
 <h2>議題</h2>
@@ -161,9 +202,15 @@
   <ul id="timeline"><li class="empty">—</li></ul>
 </details>
 
+<details id="past-meetings-details">
+  <summary>過去の会議</summary>
+  <ul id="past-meetings"><li class="empty">—</li></ul>
+</details>
+
 <footer>
   30秒ごとに確定した字幕のみを Gemini Nano で抽出し、蓄積します。<br />
   リンクは拡張機能側で生成（モデルはURLを出力しません）。
 </footer>
 
+<script src="archive.js"></script>
 <script src="sidepanel.js"></script>

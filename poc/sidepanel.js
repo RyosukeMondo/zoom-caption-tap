@@ -253,6 +253,17 @@ let timer = null;
 // call get-settled and extract concurrently, racing on rawTranscript/note.
 let ticking = false;
 
+// ---------------------------------------------------------------------------
+// Review mode — viewing a saved meeting instead of the live one.
+// ---------------------------------------------------------------------------
+//
+// Deliberately kept apart from every live variable above (rawTranscript,
+// note, speakerStats, meetingStartAt, timelineRenderedCount, ticking).
+// Loading a past meeting must never touch those — an archive that corrupts
+// the very session it exists to protect would defeat its own purpose.
+let reviewMeeting = null; // full record from MeetingArchive.load(), or null when live
+let resummarizing = false; // guards re-summarize against tick()'s extraction loop
+
 const $ = (id) => document.getElementById(id);
 
 function setStatus(text, kind = "") {
@@ -403,14 +414,19 @@ async function tick() {
   // ticking guards re-entrancy: extraction latency is model-dependent and can
   // exceed TICK_MS, and without this a still-in-flight tick and the next
   // scheduled one would both pull get-settled and extract concurrently.
-  if (!running || ticking) return;
+  // resummarizing guards the *other* direction: re-summarize also calls
+  // extractFromChunk() against the same baseSession, so the two must never
+  // run at once.
+  if (!running || ticking || resummarizing) return;
   ticking = true;
 
   try {
     const res = await chrome.runtime.sendMessage({ type: "get-settled" });
     const settled = res?.lines ?? [];
     if (!settled.length) {
-      $("tickinfo").textContent = `no new settled lines · ticks ${stats.ticks}`;
+      // Reviewing repurposes #tickinfo for the reviewed meeting's summary;
+      // a quiet live tick must not overwrite it.
+      if (!reviewMeeting) $("tickinfo").textContent = `no new settled lines · ticks ${stats.ticks}`;
       return;
     }
 
@@ -483,6 +499,13 @@ async function tick() {
     if (chunk.length > MAX_CHARS_PER_TICK) chunk = chunk.slice(-MAX_CHARS_PER_TICK);
 
     stats.ticks += 1;
+
+    // Piggybacks on the tick loop rather than its own timer, but does not
+    // save on every tick — see saveMeetingSnapshot() for why. Placed here
+    // (before extraction) so the newly-appended transcript lines above are
+    // persisted even if this tick's extraction fails below.
+    if (stats.ticks % PERIODIC_SAVE_TICKS === 0) saveMeetingSnapshot();
+
     setStatus("extracting…", "warn");
 
     let extraction = null;
@@ -562,9 +585,9 @@ function renderBucket(id, bucket) {
   );
 }
 
-function renderKeywords() {
+function renderKeywords(keywords = note.keywords) {
   const el = $("keywords");
-  if (!note.keywords.length) {
+  if (!keywords.length) {
     el.replaceChildren(
       Object.assign(document.createElement("span"), {
         className: "empty",
@@ -575,7 +598,7 @@ function renderKeywords() {
   }
 
   el.replaceChildren(
-    ...note.keywords
+    ...keywords
       .slice()
       // Corroborated first, then recent. Capped so the panel stays scannable
       // rather than becoming a wall of chips.
@@ -600,6 +623,10 @@ function renderKeywords() {
  *  cheap to rebuild in full on every call — unlike the timeline, it never
  *  needs incremental appends. */
 function renderSpeakers() {
+  // A separate 5s timer (SPEAKER_REFRESH_MS) drives this independently of
+  // render(), so it needs its own guard: without it, it would overwrite the
+  // review view with live silence badges every 5 seconds.
+  if (reviewMeeting) return;
   const el = $("speakers");
   if (!speakerStats.size) {
     el.replaceChildren(
@@ -640,13 +667,17 @@ function renderSpeakers() {
 
 /** Shared row renderer for the timeline and the recall panel: elapsed time
  *  since meeting start, then "speaker: text". textContent/createTextNode
- *  only — this is untrusted meeting text, never innerHTML. */
-function timelineLineNode(line) {
+ *  only — this is untrusted meeting text, never innerHTML.
+ *
+ *  `startAt` defaults to the live meetingStartAt but review mode passes the
+ *  reviewed meeting's own startedAt, so elapsed times are never computed
+ *  against the wrong session's clock. */
+function timelineLineNode(line, startAt = meetingStartAt) {
   const li = document.createElement("li");
 
   const ts = document.createElement("span");
   ts.className = "ts";
-  ts.textContent = meetingStartAt == null ? "" : formatElapsed(line.at - meetingStartAt);
+  ts.textContent = startAt == null ? "" : formatElapsed(line.at - startAt);
 
   li.append(ts, document.createTextNode(`${line.speaker}: ${line.text}`));
   return li;
@@ -688,10 +719,16 @@ function renderRecall() {
     return;
   }
 
-  el.replaceChildren(...recent.map(timelineLineNode));
+  // Not `.map(timelineLineNode)` directly: Array#map's callback also
+  // receives the index, which would land in timelineLineNode's `startAt`
+  // parameter and override its default.
+  el.replaceChildren(...recent.map((l) => timelineLineNode(l)));
 }
 
 function render() {
+  // While reviewing a saved meeting, the panel's DOM belongs to
+  // renderReview() — a live tick() must not paint over it.
+  if (reviewMeeting) return;
   renderBucket("topics", note.topics);
   renderBucket("decisions", note.decisions);
   renderBucket("actions", note.actions);
@@ -705,7 +742,9 @@ function render() {
     `lines ${rawTranscript.length}`;
 }
 
-function buildMarkdown() {
+// Defaults to the live note/transcript; passed reviewMeeting's note/transcript
+// when exporting a saved meeting, so "export" always exports what's on screen.
+function buildMarkdown({ noteData = note, transcript = rawTranscript } = {}) {
   const section = (title, bucket) =>
     `## ${title}\n` +
     (bucket.length ? bucket.map((b) => `- ${b.text}`).join("\n") : "- —") +
@@ -714,18 +753,18 @@ function buildMarkdown() {
   return (
     `# 議事録\n\n` +
     `生成: ${new Date().toLocaleString("ja-JP")}\n` +
-    `発言行数: ${rawTranscript.length}\n\n` +
-    section("議題", note.topics) +
+    `発言行数: ${transcript.length}\n\n` +
+    section("議題", noteData.topics) +
     "\n" +
-    section("決定事項", note.decisions) +
+    section("決定事項", noteData.decisions) +
     "\n" +
-    section("アクション", note.actions) +
+    section("アクション", noteData.actions) +
     "\n" +
-    section("未解決の質問", note.questions) +
+    section("未解決の質問", noteData.questions) +
     "\n" +
     `## キーワード\n` +
-    (note.keywords.length
-      ? note.keywords
+    (noteData.keywords.length
+      ? noteData.keywords
           .map(
             (k) =>
               `- [${k.text}](https://www.google.com/search?q=${encodeURIComponent(k.text)})`,
@@ -733,9 +772,295 @@ function buildMarkdown() {
           .join("\n")
       : "- —") +
     "\n\n---\n\n## 全発言記録\n\n" +
-    rawTranscript.map((l) => `- **${l.speaker}**: ${l.text}`).join("\n") +
+    transcript.map((l) => `- **${l.speaker}**: ${l.text}`).join("\n") +
     "\n"
   );
+}
+
+// ---------------------------------------------------------------------------
+// Archiving — persists the live meeting so a browser crash mid-meeting loses
+// at most a few ticks' worth of transcript, not the whole thing.
+// ---------------------------------------------------------------------------
+
+// A save writes the full transcript + note to chrome.storage.local, so doing
+// it on every 30s tick (TICK_MS) would mean a growing-transcript write every
+// 30 seconds even through an uneventful stretch. Once every 4 productive
+// ticks — 2 minutes of new material — bounds that cost while keeping the
+// crash-loss window small relative to a typical meeting.
+const PERIODIC_SAVE_TICKS = 4;
+
+// Derives a stable id from meetingStartAt: it is set exactly once, on the
+// first settled line of the meeting (see tick()), and never changes again —
+// so every save for this meeting resolves to the same id and MeetingArchive
+// upserts one record instead of piling up duplicates.
+// Returns the stored record on success, or null — re-summarize needs the
+// record it just flushed, and a caller that cannot tell a failed save from a
+// successful one would happily re-summarize a meeting that was never archived.
+async function saveMeetingSnapshot() {
+  if (!rawTranscript.length) return null; // build() would reject an empty transcript anyway
+  const id = meetingStartAt != null ? `m-${meetingStartAt}` : undefined;
+  const meeting = MeetingArchive.build({ transcript: rawTranscript, note, id });
+  if (!meeting) return null;
+
+  const result = await MeetingArchive.save(meeting);
+  if (!result.ok) {
+    setStatus(`会議の保存に失敗しました: ${result.error}`, "bad");
+    return null;
+  }
+  if (result.prunedForQuota) {
+    setStatus("保存容量の上限のため、最も古い会議を削除して保存しました。", "warn");
+  }
+  refreshPastMeetingsList();
+  return meeting;
+}
+
+// ---------------------------------------------------------------------------
+// Past meetings — a read-only archive browser. Everything here reads from
+// MeetingArchive or from reviewMeeting, never from the live rawTranscript/
+// note/speakerStats/meetingStartAt/timelineRenderedCount above.
+// ---------------------------------------------------------------------------
+
+async function refreshPastMeetingsList() {
+  const el = $("past-meetings");
+  const meetings = await MeetingArchive.list();
+
+  if (!meetings.length) {
+    el.replaceChildren(
+      Object.assign(document.createElement("li"), { className: "empty", textContent: "—" }),
+    );
+    return;
+  }
+
+  el.replaceChildren(
+    ...meetings.map((m) => {
+      const li = document.createElement("li");
+
+      const title = document.createElement("span");
+      title.className = "pm-title";
+      title.textContent = m.title;
+
+      const meta = document.createElement("span");
+      meta.className = "pm-meta";
+      const when = new Date(m.startedAt).toLocaleString("ja-JP");
+      const duration = formatElapsed(m.endedAt - m.startedAt);
+      const speakers = m.speakers.length ? m.speakers.join("、") : "—";
+      meta.textContent = `${when} · ${duration} · ${speakers} · ${m.lineCount}行`;
+
+      const del = document.createElement("button");
+      del.textContent = "🗑";
+      del.title = "削除";
+      del.className = "pm-delete";
+      del.addEventListener("click", async (e) => {
+        e.stopPropagation(); // don't also trigger the row's own click-to-open
+        if (!confirm(`「${m.title}」を削除します。元に戻せません。よろしいですか？`)) return;
+        await MeetingArchive.remove(m.id);
+        if (reviewMeeting?.id === m.id) exitReview();
+        refreshPastMeetingsList();
+      });
+
+      li.append(title, meta, del);
+      li.addEventListener("click", () => openReviewMeeting(m.id));
+      return li;
+    }),
+  );
+}
+
+/** speakerStats-shaped rendering doesn't fit reviewMeeting.speakers (an array
+ *  of MeetingArchive.computeSpeakers() aggregates, not the live silence-since
+ *  Map), so this is a separate renderer rather than a reuse of renderSpeakers().
+ *  estimatedSpeakingMs is derived from caption timing, never audio — always
+ *  labelled 推定 so it is never read as a measurement. */
+function renderReviewSpeakers(speakers) {
+  const el = $("speakers");
+  if (!speakers.length) {
+    el.replaceChildren(
+      Object.assign(document.createElement("li"), { className: "empty", textContent: "—" }),
+    );
+    return;
+  }
+
+  el.replaceChildren(
+    ...speakers.map((s) => {
+      const li = document.createElement("li");
+
+      const label = document.createElement("span");
+      label.textContent = `${s.name}（発言${s.utterances}回・${s.chars}文字）`;
+
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = `推定発言時間 ${formatElapsed(s.estimatedSpeakingMs)}`;
+
+      li.append(label, badge);
+      return li;
+    }),
+  );
+}
+
+function renderReviewTimeline() {
+  const m = reviewMeeting;
+  $("timeline").replaceChildren(...m.transcript.map((line) => timelineLineNode(line, m.startedAt)));
+}
+
+/** Mirrors renderTimelineIfOpen()'s gating: the timeline stays out of the
+ *  DOM (and the review transcript stays unbuilt) until <details> is opened. */
+function renderReviewTimelineIfOpen() {
+  if ($("timeline-details").open) renderReviewTimeline();
+}
+
+function renderReview() {
+  const m = reviewMeeting;
+  renderBucket("topics", m.note.topics);
+  renderBucket("decisions", m.note.decisions);
+  renderBucket("actions", m.note.actions);
+  renderBucket("questions", m.note.questions);
+  renderKeywords(m.note.keywords);
+  renderReviewSpeakers(m.speakers);
+  renderReviewTimelineIfOpen();
+
+  $("tickinfo").textContent = `過去の会議を表示中 · lines ${m.transcript.length}`;
+  $("review-title").textContent = `${m.title}（${new Date(m.startedAt).toLocaleString("ja-JP")}）`;
+  $("review-banner").hidden = false;
+
+  // 聞き逃した draws from the live rawTranscript, which is meaningless (and
+  // confusing) while looking at a different meeting.
+  $("recall-btn").disabled = true;
+  $("recall-panel").hidden = true;
+}
+
+async function openReviewMeeting(id) {
+  // The live session is not paused or otherwise touched by review — tick()
+  // keeps collecting into rawTranscript/note/speakerStats in the background
+  // exactly as before (render() and renderSpeakers() simply skip repainting
+  // while reviewMeeting is set). Nothing is lost either way; this is purely
+  // about avoiding the confusion of watching a live meeting update while
+  // trying to read an old one.
+  if (running) {
+    const proceed = confirm(
+      "会議は現在進行中です。表示中も収録はバックグラウンドで続きますが、" +
+        "パネルには選択した過去の会議が表示されます。よろしいですか？",
+    );
+    if (!proceed) return;
+  }
+
+  const meeting = await MeetingArchive.load(id);
+  if (!meeting) {
+    setStatus("会議データを読み込めませんでした。", "bad");
+    return;
+  }
+  reviewMeeting = meeting;
+  renderReview();
+}
+
+function exitReview() {
+  if (!reviewMeeting) return;
+  reviewMeeting = null;
+  $("review-banner").hidden = true;
+  $("recall-btn").disabled = false;
+
+  // The live #timeline DOM was replaced wholesale by renderReviewTimeline(),
+  // so timelineRenderedCount (a count of *rendered* lines, not a live-data
+  // field) no longer matches what's on screen. Resetting it to 0 tells
+  // appendNewTimelineLines() to rebuild the DOM from scratch instead of
+  // incrementally appending onto the stale reviewed rows. rawTranscript
+  // itself — the actual ground truth — was never touched.
+  timelineRenderedCount = 0;
+  render();
+}
+
+/** Splits a transcript into MAX_CHARS_PER_TICK-sized chunks on line
+ *  boundaries (never mid-line), the same unit tick() uses for one live
+ *  extraction call — so re-summarize is just that loop run repeatedly
+ *  instead of once. */
+function chunkTranscript(transcript) {
+  const chunks = [];
+  let cur = [];
+  let curLen = 0;
+  for (const line of transcript) {
+    const lineText = `${line.speaker}: ${line.text}`;
+    if (curLen + lineText.length > MAX_CHARS_PER_TICK && cur.length) {
+      chunks.push(cur.join("\n"));
+      cur = [];
+      curLen = 0;
+    }
+    cur.push(lineText);
+    curLen += lineText.length + 1;
+  }
+  if (cur.length) chunks.push(cur.join("\n"));
+  return chunks;
+}
+
+/**
+ * Re-runs extraction over a stored meeting's whole transcript and replaces its
+ * saved note.
+ *
+ * The live loop only ever sees the last 30 seconds, so an early tick had no
+ * idea where the meeting was heading and a late one had forgotten the start.
+ * Running the same extract-then-merge over the full transcript gives every
+ * chunk the same treatment but with nothing missed — and because JS owns the
+ * merge (never the model), doing it again is safe: mergeInto() dedupes by
+ * containment, so re-extracted facts collapse onto each other rather than
+ * accumulating.
+ *
+ * Deliberately builds a fresh note rather than merging into the stored one.
+ * Re-summarize should be idempotent — running it twice must not double every
+ * count — and starting clean is the simplest way to guarantee that.
+ */
+async function resummarizeMeeting(meeting) {
+  const chunks = chunkTranscript(meeting.transcript);
+  if (!chunks.length) {
+    setStatus("この会議には書き起こしがありません。", "warn");
+    return;
+  }
+
+  resummarizing = true;
+  $("resummarize-btn").disabled = true;
+
+  const fresh = { topics: [], decisions: [], actions: [], questions: [], keywords: [] };
+  let failures = 0;
+
+  try {
+    await ensureSession();
+
+    for (let i = 0; i < chunks.length; i++) {
+      setStatus(`再要約中… ${i + 1}/${chunks.length} チャンク`, "warn");
+      try {
+        const out = await extractFromChunk(chunks[i]);
+        if (out) {
+          mergeInto(fresh.topics, out.topics);
+          mergeInto(fresh.decisions, out.decisions);
+          mergeInto(fresh.actions, out.actions);
+          mergeInto(fresh.questions, out.questions);
+          mergeInto(fresh.keywords, out.keywords, { keywords: true });
+        }
+      } catch {
+        // One bad chunk shouldn't discard the other forty. Counted and
+        // reported at the end so the result is never silently partial.
+        failures += 1;
+      }
+    }
+
+    meeting.note = fresh;
+    const result = await MeetingArchive.save(meeting);
+    if (!result.ok) {
+      setStatus(`再要約は完了しましたが保存に失敗しました: ${result.error}`, "bad");
+      return;
+    }
+
+    if (reviewMeeting?.id === meeting.id) renderReview();
+    await refreshPastMeetingsList();
+
+    setStatus(
+      failures
+        ? `再要約が完了しました（${chunks.length}チャンク中${failures}件は失敗）。`
+        : `再要約が完了しました（${chunks.length}チャンク）。`,
+      failures ? "warn" : "ok",
+    );
+  } catch (err) {
+    setStatus(`再要約に失敗しました: ${err}`, "bad");
+  } finally {
+    resummarizing = false;
+    $("resummarize-btn").disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +1164,52 @@ $("recall-btn").addEventListener("click", () => {
 // arrived while it was closed (renderTimelineIfOpen() skips it otherwise).
 $("timeline-details").addEventListener("toggle", (e) => {
   if (e.target.open) appendNewTimelineLines();
+});
+
+// Re-summarize acts on whichever meeting is on screen: the one being reviewed,
+// or the live session's own archived snapshot. Running it against the live
+// meeting is allowed only once it has stopped — tick() and this would
+// otherwise contend for the same model session, which is what `resummarizing`
+// guards on the other side.
+$("resummarize-btn").addEventListener("click", async () => {
+  if (running) {
+    setStatus("再要約するには、先に「■ 停止」を押してください。", "warn");
+    return;
+  }
+
+  if (reviewMeeting) {
+    await resummarizeMeeting(reviewMeeting);
+    return;
+  }
+
+  // Not reviewing: re-summarize the live session, which means flushing it to
+  // the archive first so there is a stored record to rewrite.
+  if (!rawTranscript.length) {
+    setStatus("まだ書き起こしがありません。", "warn");
+    return;
+  }
+  const saved = await saveMeetingSnapshot();
+  if (!saved) return;
+  await resummarizeMeeting(saved);
+  // The live panel still shows the note built from 30-second windows; the
+  // rewritten one only exists in the archive. Open the saved record so the
+  // result of the button press is what the user is actually looking at,
+  // instead of an unchanged screen and a success message.
+  await openReviewMeeting(saved.id);
+});
+
+// The dashboard is a full page rather than more panel: comparing speakers and
+// reading a timeline needs width this side panel does not have.
+$("dashboard-btn").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+});
+
+$("back-to-live-btn").addEventListener("click", exitReview);
+
+// The archive is only read when the list is actually opened — no reason to hit
+// storage on every panel load for a section most sessions never expand.
+$("past-meetings-details").addEventListener("toggle", (e) => {
+  if (e.target.open) refreshPastMeetingsList();
 });
 
 checkAvailability();
