@@ -197,6 +197,88 @@
   );
   const m4 = [...m4Opening, ...m4Body];
 
+  // ---------------------------------------------------------------------
+  // 5. Sales call — the 商談フィードバック demo.
+  //
+  //    Deliberately shaped like a real, mediocre-but-not-disastrous call, so
+  //    the feedback has something to actually say: it opens well with
+  //    discovery questions, collapses into a long product monologue in the
+  //    middle (which is what drags the talk ratio up and drops the customer's
+  //    share in the second half), then recovers at the end by securing a next
+  //    step. A flawless call would make the coaching panel look like
+  //    decoration.
+  // ---------------------------------------------------------------------
+  const r5 = rng(5005);
+  const m5Start = now - 2 * day + 15 * 60 * 60000;
+
+  const m5Discovery = lay(
+    [
+      ["営業・佐々木", "本日はお時間をいただきありがとうございます。"],
+      ["顧客・田村", "こちらこそ、よろしくお願いします。"],
+      ["営業・佐々木", "早速ですが、現在の業務で一番お困りのところはどのあたりでしょうか。"],
+      ["顧客・田村", "問い合わせ対応に時間がかかりすぎているところですね。"],
+      ["顧客・田村", "一件あたりの対応時間が、平均で十五分ほどかかっています。"],
+      ["営業・佐々木", "その十五分は、どのような内訳になっていますか。"],
+      ["顧客・田村", "半分近くは調べる時間だと思います。"],
+      ["顧客・岡田", "実際、マニュアルを探すだけで数分かかることもあります。"],
+      ["営業・佐々木", "それは何名くらいの方が同じ状況でしょうか。"],
+      ["顧客・岡田", "オペレーターが二十名ほどいますので、全員ですね。"],
+      ["顧客・田村", "特に新人は、どこを見ればいいのかも分からない状態です。"],
+      ["営業・佐々木", "なるほど。教育にも時間がかかってしまうということですね。"],
+      ["顧客・田村", "そうなんです。育つまでに三ヶ月はかかります。"],
+    ],
+    m5Start,
+    r5,
+  );
+
+  // The monologue. Consecutive seller lines with short gaps, long enough to
+  // cross the 90s threshold and be flagged.
+  const m5Pitch = lay(
+    [
+      ["営業・佐々木", "でしたら、弊社のサービスがお役に立てると思います。"],
+      ["営業・佐々木", "まず、会話の内容をリアルタイムで解析する仕組みが入っています。"],
+      ["営業・佐々木", "お客様が話された内容から、関連する社内文書を自動で提示します。"],
+      ["営業・佐々木", "検索の操作は不要で、画面の横に候補が出てくる形です。"],
+      ["営業・佐々木", "表記のゆれにも対応していまして、たとえば電気ポットと電気ケトルのような。"],
+      ["営業・佐々木", "言い方が違っても同じ商品として扱えます。"],
+      ["営業・佐々木", "導入の形としては、まず既存の文書を取り込んでいただきます。"],
+      ["営業・佐々木", "その際、フォーマットが揃っていなくても問題ありません。"],
+      ["営業・佐々木", "こちらで整形して、検索できる形に変換します。"],
+      ["営業・佐々木", "ダッシュボードでは、対応時間の推移も確認できます。"],
+      ["営業・佐々木", "どの案件に時間がかかっているかも一覧で見られます。"],
+      ["営業・佐々木", "管理者の方向けに、レポート出力の機能もございます。"],
+      ["営業・佐々木", "権限管理も細かく設定できますので、情報統制の面でも安心です。"],
+      ["営業・佐々木", "他社様では、対応時間が三割ほど短縮した例もございます。"],
+      ["営業・佐々木", "教育期間についても、短縮できたというお声をいただいています。"],
+      ["営業・佐々木", "セキュリティ面では、データは国内のサーバーで管理しています。"],
+      ["営業・佐々木", "外部への持ち出しも制限できる設計になっています。"],
+      ["営業・佐々木", "運用開始後のサポートも、専任の担当がつきます。"],
+      ["営業・佐々木", "月次で利用状況をご報告する形も可能です。"],
+      ["営業・佐々木", "という形になっております。"],
+    ],
+    m5Discovery[m5Discovery.length - 1].at + 6000,
+    r5,
+    { sameMs: [3500, 6000] },
+  );
+
+  const m5Close = lay(
+    [
+      ["顧客・田村", "ありがとうございます。だいぶ分かりました。"],
+      ["営業・佐々木", "何かご不明な点はございますか。"],
+      ["顧客・岡田", "費用感はどれくらいになりますか。"],
+      ["営業・佐々木", "規模によりますが、概算はお出しできます。"],
+      ["顧客・田村", "社内で検討したいので、資料をいただけますか。"],
+      ["営業・佐々木", "承知しました。では次回、お見積りとご提案書をお持ちします。"],
+      ["営業・佐々木", "来週の後半で、ご都合のよい日程はございますか。"],
+      ["顧客・田村", "木曜の午後であれば空いています。"],
+      ["営業・佐々木", "ありがとうございます。では木曜日で調整いたします。"],
+    ],
+    m5Pitch[m5Pitch.length - 1].at + 4000,
+    r5,
+  );
+
+  const m5 = [...m5Discovery, ...m5Pitch, ...m5Close];
+
   const seeds = [
     {
       id: "seed-product-priorities",
@@ -296,6 +378,39 @@
     },
   ];
 
+  seeds.push({
+    id: "seed-sales-call",
+    title: "商談（コールセンター向け提案）",
+    // Preselected so the feedback panel has something to show the moment the
+    // sample loads — picking "which speaker am I" first would bury the demo.
+    seller: "営業・佐々木",
+    transcript: m5,
+    note: {
+      topics: [
+        { text: "問い合わせ対応の所要時間", count: 5, firstSeen: now, lastSeen: now },
+        { text: "マニュアル検索にかかる時間", count: 4, firstSeen: now, lastSeen: now },
+        { text: "新人教育にかかる期間", count: 3, firstSeen: now, lastSeen: now },
+      ],
+      decisions: [
+        { text: "見積書と提案書を次回持参する", count: 2, firstSeen: now, lastSeen: now },
+        { text: "次回打ち合わせは木曜午後で調整する", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      actions: [
+        { text: "佐々木が見積りと提案書を作成する", count: 2, firstSeen: now, lastSeen: now },
+        { text: "木曜午後で日程を調整する", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      questions: [
+        { text: "費用感はどれくらいか", count: 2, firstSeen: now, lastSeen: now },
+        { text: "対応時間の内訳はどうなっているか", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      keywords: [
+        { text: "コールセンター", count: 4, firstSeen: now, lastSeen: now },
+        { text: "表記ゆれ", count: 2, firstSeen: now, lastSeen: now },
+        { text: "権限管理", count: 1, firstSeen: now, lastSeen: now },
+      ],
+    },
+  });
+
   const results = [];
   for (const s of seeds) {
     const meeting = MeetingArchive.build(s);
@@ -304,6 +419,11 @@
       continue;
     }
     const saved = await MeetingArchive.save(meeting);
+    // Carried outside the record: which speaker is "me" is a coaching
+    // preference, not part of the meeting itself.
+    if (saved.ok && s.seller && global.MeetingCoach) {
+      await MeetingCoach.setSeller(meeting.id, s.seller);
+    }
     const mins = Math.round((meeting.endedAt - meeting.startedAt) / 60000);
     results.push(
       `${saved.ok ? "OK" : "FAIL"} ${meeting.title} — ${meeting.transcript.length}行 / ` +

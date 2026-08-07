@@ -665,6 +665,150 @@ function renderSpeakers() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Live coaching panel (coaching.js) — talk ratio + nudges for whichever
+// meeting is on screen. Pure read over rawTranscript/reviewMeeting on the
+// same SPEAKER_REFRESH_MS cadence as renderSpeakers() above: no new timer,
+// no model call, no new permission.
+// ---------------------------------------------------------------------------
+
+// Same derivation saveMeetingSnapshot() uses for the archive id: "meetingStartAt
+// is set exactly once, on the first settled line of the meeting (see tick()),
+// and never changes again" — reusing it means a seller choice made mid-call
+// lands on the exact record the archive later saves under.
+function liveMeetingId() {
+  return meetingStartAt != null ? `m-${meetingStartAt}` : null;
+}
+
+let coachSeller = null; // currently selected seller name, or null if unset
+let coachSellerFor; // meeting id coachSeller was loaded for (undefined = never loaded)
+
+async function loadCoachSeller(id) {
+  coachSeller = await MeetingCoach.getSeller(id);
+  coachSellerFor = id;
+  renderCoach();
+}
+
+function coachSpeakerNames() {
+  return reviewMeeting ? reviewMeeting.speakers.map((s) => s.name) : [...speakerStats.keys()];
+}
+
+function renderCoachSellerOptions(names) {
+  const sel = $("coach-seller");
+  sel.replaceChildren(
+    Object.assign(document.createElement("option"), { value: "", textContent: "未設定" }),
+    ...names.map((n) => Object.assign(document.createElement("option"), { value: n, textContent: n })),
+  );
+  sel.value = names.includes(coachSeller) ? coachSeller : "";
+}
+
+/** One <li>, styled by nudge level using the panel's existing ok/warn/bad
+ *  classes. `text` is rendered verbatim — coaching.js owns the wording. */
+function coachNudgeLi(n) {
+  const li = document.createElement("li");
+  if (n.level === "ok" || n.level === "warn" || n.level === "bad") li.className = n.level;
+  li.textContent = n.text;
+  return li;
+}
+
+// Only the first couple of nudges are shown directly — this panel is narrow
+// and meant to be glanceable mid-call, not read like a report. The rest sit
+// behind a closed <details> instead of being dropped.
+const COACH_VISIBLE_NUDGES = 2;
+
+function renderCoachNudges(items) {
+  const list = $("coach-nudges");
+  const moreWrap = $("coach-nudges-more");
+  const moreList = $("coach-nudges-more-list");
+
+  if (!items.length) {
+    list.replaceChildren(
+      Object.assign(document.createElement("li"), { className: "empty", textContent: "—" }),
+    );
+    moreWrap.hidden = true;
+    moreList.replaceChildren();
+    return;
+  }
+
+  list.replaceChildren(...items.slice(0, COACH_VISIBLE_NUDGES).map(coachNudgeLi));
+
+  const rest = items.slice(COACH_VISIBLE_NUDGES);
+  if (rest.length) {
+    moreList.replaceChildren(...rest.map(coachNudgeLi));
+    $("coach-nudges-more-summary").textContent = `他 ${rest.length} 件`;
+    moreWrap.hidden = false;
+  } else {
+    moreWrap.hidden = true;
+    moreList.replaceChildren();
+  }
+}
+
+/** Renders feedback for whichever meeting is on screen: the live one, or
+ *  reviewMeeting when reviewing. Never mixes the two — the seller preference
+ *  loaded/saved here is keyed on whichever id is current, so reviewing an
+ *  old meeting can never read or write the live meeting's seller. */
+function renderCoach() {
+  const id = reviewMeeting ? reviewMeeting.id : liveMeetingId();
+
+  if (id !== coachSellerFor) {
+    // Async; renderCoach() runs again once this resolves. Falls through
+    // below with whatever coachSeller currently holds in the meantime
+    // rather than blocking the rest of the panel on the storage read.
+    loadCoachSeller(id);
+  }
+
+  renderCoachSellerOptions(coachSpeakerNames());
+
+  if (!id || !coachSeller) {
+    $("coach-unset").hidden = false;
+    $("coach-body").hidden = true;
+    return;
+  }
+
+  let report, items;
+  if (reviewMeeting) {
+    report = MeetingCoach.analyze({ transcript: reviewMeeting.transcript }, coachSeller);
+    items = MeetingCoach.nudges(report);
+  } else {
+    ({ report, nudges: items } = MeetingCoach.analyzeLive(
+      { transcript: rawTranscript },
+      coachSeller,
+      Date.now(),
+    ));
+  }
+
+  $("coach-unset").hidden = true;
+  $("coach-body").hidden = false;
+
+  if (!report) {
+    // Seller picked, but has no utterances in this transcript slice yet —
+    // degrade to an explicit prompt rather than a bar full of zeroes.
+    $("coach-ratio-fill").style.width = "0%";
+    $("coach-ratio-fill").className = "";
+    $("coach-ratio-pct").textContent = "—";
+    renderCoachNudges([]);
+    return;
+  }
+
+  const pct = report.talkRatio != null ? Math.round(report.talkRatio * 100) : null;
+  const talkNudge = (report && items.find((n) => n.metric === "talkRatio")) || null;
+
+  const fill = $("coach-ratio-fill");
+  fill.style.width = `${pct ?? 0}%`;
+  fill.className = talkNudge ? talkNudge.level : "";
+  $("coach-ratio-pct").textContent = pct != null ? `${pct}%` : "—";
+
+  renderCoachNudges(items);
+}
+
+$("coach-seller").addEventListener("change", async (e) => {
+  const id = reviewMeeting ? reviewMeeting.id : liveMeetingId();
+  coachSeller = e.target.value || null;
+  coachSellerFor = id;
+  if (id) await MeetingCoach.setSeller(id, coachSeller);
+  renderCoach();
+});
+
 /** Shared row renderer for the timeline and the recall panel: elapsed time
  *  since meeting start, then "speaker: text". textContent/createTextNode
  *  only — this is untrusted meeting text, never innerHTML.
@@ -735,6 +879,7 @@ function render() {
   renderBucket("questions", note.questions);
   renderKeywords();
   renderSpeakers();
+  renderCoach();
   renderTimelineIfOpen();
 
   $("tickinfo").textContent =
@@ -915,6 +1060,7 @@ function renderReview() {
   renderBucket("questions", m.note.questions);
   renderKeywords(m.note.keywords);
   renderReviewSpeakers(m.speakers);
+  renderCoach();
   renderReviewTimelineIfOpen();
 
   $("tickinfo").textContent = `過去の会議を表示中 · lines ${m.transcript.length}`;
@@ -1119,7 +1265,10 @@ $("start").addEventListener("click", async () => {
   // Independent of tick()/TICK_MS — see SPEAKER_REFRESH_MS above. Keeps the
   // "elapsed since last spoke" badges counting up even through a quiet
   // stretch, when tick() itself has nothing new to do.
-  speakerRefreshTimer = setInterval(renderSpeakers, SPEAKER_REFRESH_MS);
+  speakerRefreshTimer = setInterval(() => {
+    renderSpeakers();
+    renderCoach();
+  }, SPEAKER_REFRESH_MS);
 });
 
 $("stop").addEventListener("click", () => {

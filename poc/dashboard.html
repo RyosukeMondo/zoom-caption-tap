@@ -219,6 +219,64 @@
   }
   .estimate-callout strong { color: var(--warn); }
 
+  /* Coaching / feedback section */
+  .coaching-seller-picker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+  .coaching-seller-picker label { color: var(--muted); }
+  #coaching-seller-select {
+    font: inherit;
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg);
+  }
+
+  #coaching-ratio-track { position: relative; }
+  .bar-fill.coaching-fill { background: var(--chip-fg); }
+  .coaching-ratio-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 2px dashed var(--fg);
+    border-right: 2px dashed var(--fg);
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .coaching-ratio-legend {
+    display: flex;
+    gap: 18px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .coaching-ratio-legend strong { color: var(--fg); }
+
+  .coaching-tile-value { margin: 0; font-size: 18px; font-weight: 600; }
+  .coaching-tile-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+
+  .coaching-block { margin-top: 18px; }
+  .coaching-nudges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .coaching-nudge {
+    padding: 6px 10px;
+    border-left: 3px solid var(--line);
+    border-radius: 4px;
+    background: var(--chip);
+    font-size: 12px;
+  }
+  .coaching-nudge-warn { border-left-color: var(--warn); }
+  .coaching-nudge-ok { border-left-color: var(--ok); }
+  .coaching-nudge-info { border-left-color: var(--muted); }
+
+  .coaching-monologues { list-style: none; margin: 0; padding: 0; }
+  .coaching-monologues li { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .coaching-monologues .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+
   /* Speaker table */
   #speaker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   #speaker-table th, #speaker-table td {
@@ -472,6 +530,51 @@
           </div>
         </section>
 
+        <section id="coaching-section" aria-label="商談フィードバック">
+          <h3>商談フィードバック</h3>
+          <div class="estimate-callout">
+            <strong>※ このフィードバックについて：</strong>
+            ここに表示される発言比率・発言時間・連続発言の長さは、字幕のタイムスタンプから算出した<strong>推定値（目安）</strong>であり、実際の音声を測定した値ではありません。声のトーン、感情の動き、発言の重なりなどは解析していません。営業成績を評価する公式な指標ではなく、振り返りのための参考情報としてご活用ください。
+          </div>
+
+          <div class="coaching-seller-picker">
+            <label for="coaching-seller-select">あなた（営業担当）の発言者</label>
+            <select id="coaching-seller-select"></select>
+          </div>
+
+          <p id="coaching-seller-prompt" class="state-message" hidden></p>
+
+          <div id="coaching-panel" hidden>
+            <div id="coaching-ratio">
+              <div class="bar-track" id="coaching-ratio-track">
+                <div class="bar-fill coaching-fill" id="coaching-ratio-fill"></div>
+              </div>
+              <div class="coaching-ratio-legend">
+                <span>あなた: <strong id="coaching-ratio-value"></strong></span>
+                <span>お客様: <strong id="coaching-ratio-customer-value"></strong></span>
+              </div>
+              <p class="inline-note">破線の範囲は目安となる発言比率（35〜55%）です。</p>
+            </div>
+
+            <div id="coaching-tiles" class="note-grid"></div>
+
+            <div class="coaching-block">
+              <h4>気づき</h4>
+              <ul id="coaching-nudges" class="coaching-nudges"></ul>
+            </div>
+
+            <div class="coaching-block">
+              <h4>次のステップ</h4>
+              <p id="coaching-nextstep-text"></p>
+            </div>
+
+            <div class="coaching-block">
+              <h4>長い連続発言（推定90秒以上）</h4>
+              <ul id="coaching-monologues-list" class="coaching-monologues"></ul>
+            </div>
+          </div>
+        </section>
+
         <section id="note-section">
           <h3>保存されたノート</h3>
           <div class="note-grid">
@@ -499,6 +602,7 @@
 
   <script src="archive.js"></script>
   <script src="samples.js"></script>
+  <script src="coaching.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

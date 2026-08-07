@@ -397,6 +397,186 @@
   }
 
   // ---------------------------------------------------------------------
+  // Coaching / feedback (MeetingCoach) — seller picker + analysis panel.
+  //
+  // "Which speaker is me" is per-meeting UI state, persisted via
+  // MeetingCoach.getSeller/setSeller (chrome.storage.local), not part of the
+  // record itself. Every render here is guarded against the user switching
+  // meetings while an async lookup is in flight.
+  // ---------------------------------------------------------------------
+
+  // Never a legitimate speaker name (speaker names, including the "unknown"
+  // fallback, are always "" or actual text) — used as the <select>'s "no
+  // seller chosen yet" option so it can't collide with a real option value.
+  const UNSET_SELLER_VALUE = "__unset__";
+
+  function populateCoachingSelect(record) {
+    const select = el("#coaching-seller-select");
+    clearChildren(select);
+    const blank = document.createElement("option");
+    blank.value = UNSET_SELLER_VALUE;
+    blank.textContent = "選択してください";
+    select.appendChild(blank);
+    for (const s of record.speakers) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = s.name || UNKNOWN_SPEAKER;
+      select.appendChild(opt);
+    }
+  }
+
+  function renderCoachingTalkRatio(report) {
+    const fill = el("#coaching-ratio-fill");
+    const pct = report.talkRatio != null ? Math.max(0, Math.min(100, report.talkRatio * 100)) : 0;
+    fill.style.width = `${pct}%`;
+    el("#coaching-ratio-value").textContent =
+      report.talkRatio != null ? `${Math.round(report.talkRatio * 100)}%` : "—";
+    el("#coaching-ratio-customer-value").textContent =
+      report.talkRatio != null ? `${Math.round((1 - report.talkRatio) * 100)}%` : "—";
+  }
+
+  function addCoachingTile(grid, title, valueText, noteText) {
+    const block = document.createElement("div");
+    block.className = "note-block";
+    const h4 = document.createElement("h4");
+    h4.textContent = title;
+    const val = document.createElement("p");
+    val.className = "coaching-tile-value";
+    val.textContent = valueText;
+    block.append(h4, val);
+    if (noteText) {
+      const note = document.createElement("p");
+      note.className = "coaching-tile-note";
+      note.textContent = noteText;
+      block.appendChild(note);
+    }
+    grid.appendChild(block);
+  }
+
+  function renderCoachingTiles(report) {
+    const grid = el("#coaching-tiles");
+    clearChildren(grid);
+
+    addCoachingTile(grid, "最長の連続発言（推定）", formatMs(report.longestSellerMonologueMs));
+
+    addCoachingTile(
+      grid,
+      "質問した回数",
+      `${report.questionsBySeller}回`,
+      `お客様の質問: ${report.questionsByCustomer}回`,
+    );
+
+    if (report.responseLatencyMs != null) {
+      addCoachingTile(grid, "返答までの間隔（中央値・推定）", formatMs(report.responseLatencyMs));
+    }
+
+    if (report.customerShareFirstHalf != null && report.customerShareSecondHalf != null) {
+      const p1 = Math.round(report.customerShareFirstHalf * 100);
+      const p2 = Math.round(report.customerShareSecondHalf * 100);
+      addCoachingTile(grid, "お客様の発言比率 前半→後半", `${p1}% → ${p2}%`);
+    }
+  }
+
+  function renderCoachingNudges(report) {
+    const list = el("#coaching-nudges");
+    clearChildren(list);
+    const items = MeetingCoach.nudges(report);
+    if (items.length === 0) {
+      renderEmpty(list, "li", "empty");
+      return;
+    }
+    for (const n of items) {
+      const li = document.createElement("li");
+      li.className = `coaching-nudge coaching-nudge-${n.level}`;
+      li.textContent = n.text;
+      list.appendChild(li);
+    }
+  }
+
+  function renderCoachingNextStep(report) {
+    const p = el("#coaching-nextstep-text");
+    p.textContent = report.nextStep ? report.nextStep.text : "見つかりませんでした。";
+  }
+
+  function renderCoachingMonologues(record, report) {
+    const list = el("#coaching-monologues-list");
+    clearChildren(list);
+    if (report.monologues.length === 0) {
+      renderEmpty(list, "li", "empty");
+      return;
+    }
+    for (const m of report.monologues) {
+      const li = document.createElement("li");
+      const ts = document.createElement("span");
+      ts.className = "ts";
+      ts.textContent = formatMs(m.startAt - record.startedAt);
+      li.append(ts, document.createTextNode(`（${formatMs(m.ms)}・推定） ${m.preview}`));
+      list.appendChild(li);
+    }
+  }
+
+  /** Renders the panel (or the appropriate degraded state) for a given seller name. */
+  function renderCoachingFeedback(record, sellerName) {
+    const prompt = el("#coaching-seller-prompt");
+    const panel = el("#coaching-panel");
+
+    if (!sellerName) {
+      panel.hidden = true;
+      prompt.hidden = false;
+      prompt.textContent = "分析を表示するには、上のプルダウンで「あなた」の発言者を選択してください。";
+      return;
+    }
+
+    const report = MeetingCoach.analyze(record, sellerName);
+    if (!report) {
+      panel.hidden = true;
+      prompt.hidden = false;
+      prompt.textContent = `選択されていた発言者「${sellerName}」は、この会議の書き起こしに見つかりませんでした。プルダウンから選び直してください。`;
+      return;
+    }
+
+    prompt.hidden = true;
+    panel.hidden = false;
+    renderCoachingTalkRatio(report);
+    renderCoachingTiles(report);
+    renderCoachingNudges(report);
+    renderCoachingNextStep(report);
+    renderCoachingMonologues(record, report);
+  }
+
+  /** Populates the seller picker and loads the persisted choice for this meeting. */
+  async function renderCoaching(record) {
+    populateCoachingSelect(record);
+    const seller = await MeetingCoach.getSeller(record.id);
+    if (!currentRecord || currentRecord.id !== record.id) return; // meeting changed mid-flight
+    const names = record.speakers.map((s) => s.name);
+    el("#coaching-seller-select").value = seller && names.includes(seller) ? seller : UNSET_SELLER_VALUE;
+    renderCoachingFeedback(record, seller);
+  }
+
+  async function handleCoachingSellerChange() {
+    const record = currentRecord;
+    if (!record) return;
+    const val = el("#coaching-seller-select").value;
+    const name = val === UNSET_SELLER_VALUE ? null : val;
+    await MeetingCoach.setSeller(record.id, name);
+    if (currentRecord !== record) return; // meeting changed mid-flight
+    renderCoachingFeedback(record, name);
+  }
+
+  /** One-time setup of the healthy-talk-ratio band, sized from MeetingCoach's
+   *  own constants so the UI and the analysis can never disagree about the
+   *  range. */
+  function initCoachingRatioBand() {
+    const track = el("#coaching-ratio-track");
+    const band = document.createElement("div");
+    band.className = "coaching-ratio-band";
+    band.style.left = `${MeetingCoach.TALK_RATIO_LOW * 100}%`;
+    band.style.width = `${(MeetingCoach.TALK_RATIO_HIGH - MeetingCoach.TALK_RATIO_LOW) * 100}%`;
+    track.appendChild(band);
+  }
+
+  // ---------------------------------------------------------------------
   // Full transcript — collapsed by default, built lazily on first expand
   // so a multi-thousand-line meeting doesn't pay the DOM-build cost until
   // the reader actually asks for it.
@@ -446,12 +626,16 @@
     el("#no-transcript-note").hidden = hasTranscript;
     el("#speaker-section").hidden = !hasTranscript;
     el("#timeline-section").hidden = !hasTranscript;
+    el("#coaching-section").hidden = !hasTranscript;
     el("#transcript-section").hidden = !hasTranscript;
 
     if (hasTranscript) {
       renderSpeakerTable(record);
       renderTimeline(record);
       resetTranscriptSection(record);
+      // Async (reads the persisted seller choice); guarded internally
+      // against the user switching meetings before it resolves.
+      renderCoaching(record);
     }
 
     renderNote(record.note);
@@ -497,6 +681,12 @@
     el("#sample-toggle-btn").addEventListener("click", () => {
       runSampleAction(sampleCount > 0 ? "clear" : "load");
     });
+
+    // Coaching: one listener for the life of the page (the <select> itself
+    // persists across meeting switches, unlike per-meeting DOM), and the
+    // healthy-range band is sized once from MeetingCoach's own constants.
+    el("#coaching-seller-select").addEventListener("change", handleCoachingSellerChange);
+    initCoachingRatioBand();
 
     await reloadArchive({ preferId: new URLSearchParams(location.search).get("id") });
   }

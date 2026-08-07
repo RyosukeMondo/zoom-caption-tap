@@ -77,6 +77,77 @@
   }
   .chip:hover { text-decoration: underline; }
 
+  /* Coach panel: glanceable mid-call, so it sits above the note sections and
+     stays terse — a rep cannot read a report while talking. */
+  #coach-panel {
+    margin: 8px 0 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  #coach-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  #coach-header label { font-size: 12px; color: var(--muted); }
+  #coach-header select {
+    font: inherit;
+    padding: 2px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+  }
+  #coach-caveat { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
+  #coach-unset { margin: 0; font-size: 12px; color: var(--muted); }
+  #coach-ratio-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  #coach-ratio-track {
+    position: relative;
+    flex: 1 1 auto;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  /* The healthy 35–55% band, drawn under the fill so the fill's actual
+     position can be read against it at a glance. */
+  #coach-ratio-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 35%;
+    width: 20%;
+    background: var(--chip-fg);
+    opacity: 0.35;
+  }
+  #coach-ratio-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 0%;
+    background: var(--muted);
+    transition: width 0.3s ease;
+  }
+  #coach-ratio-fill.ok { background: var(--ok); }
+  #coach-ratio-fill.warn { background: var(--warn); }
+  #coach-ratio-fill.bad { background: var(--bad); }
+  #coach-ratio-pct {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    flex: 0 0 auto;
+  }
+  #coach-nudges, #coach-nudges-more-list { margin: 0; padding-left: 1.1em; }
+  #coach-nudges li, #coach-nudges-more-list li { margin-bottom: 3px; font-size: 12px; }
+  #coach-nudges li.ok, #coach-nudges-more-list li.ok { color: var(--ok); }
+  #coach-nudges li.warn, #coach-nudges-more-list li.warn { color: var(--warn); }
+  #coach-nudges li.bad, #coach-nudges-more-list li.bad { color: var(--bad); }
+  #coach-nudges-more summary {
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    margin-top: 2px;
+  }
+  #coach-nudges-more-list { margin-top: 4px; }
+
   /* 聞き逃した panel: a snapshot, not a permanent section, so it reads as an
      overlay rather than another item in the running list of headings. */
   #recall-panel {
@@ -167,6 +238,31 @@
 <div id="status">…</div>
 <div id="tickinfo"></div>
 
+<div id="coach-panel">
+  <div id="coach-header">
+    <label for="coach-seller">担当者</label>
+    <select id="coach-seller"><option value="">未設定</option></select>
+  </div>
+  <p id="coach-caveat">
+    発言比率・時間は字幕のタイムスタンプによる推定値（目安）です。声のトーン・感情・割り込みは分析していません。
+  </p>
+  <p id="coach-unset">担当者を選択すると、発言比率とアドバイスを表示します。</p>
+  <div id="coach-body" hidden>
+    <div id="coach-ratio-row">
+      <div id="coach-ratio-track">
+        <div id="coach-ratio-band"></div>
+        <div id="coach-ratio-fill"></div>
+      </div>
+      <span id="coach-ratio-pct">—</span>
+    </div>
+    <ul id="coach-nudges"></ul>
+    <details id="coach-nudges-more" hidden>
+      <summary id="coach-nudges-more-summary"></summary>
+      <ul id="coach-nudges-more-list"></ul>
+    </details>
+  </div>
+</div>
+
 <div id="recall-panel" hidden>
   <h2>聞き逃した内容（直近90秒）</h2>
   <ul id="recall-list"></ul>
@@ -213,4 +309,5 @@
 </footer>
 
 <script src="archive.js"></script>
+<script src="coaching.js"></script>
 <script src="sidepanel.js"></script>
