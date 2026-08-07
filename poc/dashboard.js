@@ -460,6 +460,25 @@
 
     if (meetings.length === 0) {
       showState("empty");
+      // Only bound here, inside the empty branch: with a real archive present
+      // the button is never on screen, so there is no path by which sample
+      // data can be added to someone's actual meetings.
+      el("#load-samples-btn").addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = "読み込み中…";
+        try {
+          await MeetingSamples.seed();
+          const seeded = await MeetingArchive.list();
+          renderSidebar(seeded);
+          if (seeded.length) await selectMeeting(seeded[0].id);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "サンプルの議事録を読み込む";
+          el("#empty-state").querySelector(".sample-note").textContent =
+            `サンプルの読み込みに失敗しました: ${err}`;
+        }
+      });
       return;
     }
 

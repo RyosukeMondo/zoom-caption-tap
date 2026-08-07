@@ -141,6 +141,21 @@
     max-width: 480px;
   }
   .state-message strong { display: block; color: var(--fg); font-size: 15px; margin-bottom: 6px; }
+  .sample-cta { margin: 18px 0 8px; }
+  /* Deliberately quiet: this is a demo affordance, not the primary action.
+     The real path is recording a meeting in the side panel. */
+  .sample-note { margin-top: 8px; font-size: 12px; line-height: 1.6; }
+  #load-samples-btn {
+    font: inherit;
+    padding: 7px 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--chip);
+    color: var(--chip-fg);
+    cursor: pointer;
+  }
+  #load-samples-btn:hover:not(:disabled) { border-color: var(--fg); }
+  #load-samples-btn:disabled { opacity: 0.6; cursor: default; }
 
   /* Header meta row */
   #meeting-meta {
@@ -347,6 +362,17 @@
       <div id="empty-state" class="state-message" hidden>
         <strong>アーカイブされた会議はまだありません</strong>
         サイドパネルで会議を録音・保存すると、ここに分析結果が表示されます。
+        <!-- Offered only from the empty state: once a real meeting exists
+             there is no way to reach this, so sample data can never mix in
+             with the user's own archive. -->
+        <p class="sample-cta">
+          どんな画面になるか先に見たい場合は、サンプルの議事録を読み込めます。
+        </p>
+        <button id="load-samples-btn" type="button">サンプルの議事録を読み込む</button>
+        <p class="sample-note">
+          読み込まれるのは架空の会議データです。実際の会議の記録ではありません。
+          不要になったら、各会議の「削除」からいつでも消せます。
+        </p>
       </div>
 
       <div id="not-found-state" class="state-message" hidden>
@@ -432,6 +458,7 @@
   </div>
 
   <script src="archive.js"></script>
+  <script src="samples.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>
