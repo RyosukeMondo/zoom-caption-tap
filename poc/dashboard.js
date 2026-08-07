@@ -17,6 +17,9 @@
 
   let currentRecord = null;
   let transcriptRendered = false;
+  // How many sample meetings are currently stored. Drives whether the sidebar
+  // control offers to load samples or to remove them.
+  let sampleCount = 0;
 
   function el(sel) {
     return document.querySelector(sel);
@@ -72,7 +75,13 @@
 
       const title = document.createElement("span");
       title.className = "meeting-item-title";
-      title.textContent = m.title || "(無題の会議)";
+      if (MeetingSamples.isSample(m.id)) {
+        const badge = document.createElement("span");
+        badge.className = "sample-badge";
+        badge.textContent = "サンプル";
+        title.appendChild(badge);
+      }
+      title.appendChild(document.createTextNode(m.title || "(無題の会議)"));
 
       const meta = document.createElement("span");
       meta.className = "meeting-item-meta";
@@ -482,37 +491,73 @@
       }
     });
 
+    // Both entry points — the empty state's button and the sidebar's toggle —
+    // run the same load, so there is one code path to get wrong.
+    el("#load-samples-btn").addEventListener("click", () => runSampleAction("load"));
+    el("#sample-toggle-btn").addEventListener("click", () => {
+      runSampleAction(sampleCount > 0 ? "clear" : "load");
+    });
+
+    await reloadArchive({ preferId: new URLSearchParams(location.search).get("id") });
+  }
+
+  /**
+   * Re-reads the archive and re-renders everything that depends on it. Called
+   * on boot and after any sample load/clear, so the sidebar, the sample tools
+   * and the selected meeting can never disagree about what is stored.
+   */
+  async function reloadArchive({ preferId = null } = {}) {
     const meetings = await MeetingArchive.list();
+    sampleCount = meetings.filter((m) => MeetingSamples.isSample(m.id)).length;
+
     renderSidebar(meetings);
+    renderSampleTools(meetings.length);
 
     if (meetings.length === 0) {
       showState("empty");
-      // Only bound here, inside the empty branch: with a real archive present
-      // the button is never on screen, so there is no path by which sample
-      // data can be added to someone's actual meetings.
-      el("#load-samples-btn").addEventListener("click", async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true;
-        btn.textContent = "読み込み中…";
-        try {
-          await MeetingSamples.seed();
-          const seeded = await MeetingArchive.list();
-          renderSidebar(seeded);
-          if (seeded.length) await selectMeeting(seeded[0].id);
-        } catch (err) {
-          btn.disabled = false;
-          btn.textContent = "サンプルの議事録を読み込む";
-          el("#empty-state").querySelector(".sample-note").textContent =
-            `サンプルの読み込みに失敗しました: ${err}`;
-        }
-      });
       return;
     }
 
-    const params = new URLSearchParams(location.search);
-    const requestedId = params.get("id");
-    const targetId = requestedId || meetings[0].id;
-    await selectMeeting(targetId);
+    // A preferred id that no longer exists (deleted samples, stale ?id=) falls
+    // back to the newest meeting rather than stranding the user on an error.
+    const target = meetings.some((m) => m.id === preferId) ? preferId : meetings[0].id;
+    await selectMeeting(target);
+  }
+
+  function renderSampleTools(totalCount) {
+    const btn = el("#sample-toggle-btn");
+    const note = el("#sample-tools-note");
+    btn.disabled = false;
+
+    if (sampleCount > 0) {
+      btn.textContent = `サンプル${sampleCount}件を削除`;
+      note.textContent = "サンプルだけを削除します。実際の会議の記録は残ります。";
+      return;
+    }
+    btn.textContent = "サンプルの議事録を読み込む";
+    note.textContent = totalCount
+      ? "架空の会議データを追加します。機能を試すためのものです。"
+      : "架空の会議データを読み込んで、画面を試せます。";
+  }
+
+  async function runSampleAction(action) {
+    const btn = el("#sample-toggle-btn");
+    const emptyBtn = el("#load-samples-btn");
+    for (const b of [btn, emptyBtn]) b.disabled = true;
+    btn.textContent = action === "load" ? "読み込み中…" : "削除中…";
+
+    try {
+      if (action === "load") await MeetingSamples.seed();
+      else await MeetingSamples.clear();
+      // Select the newest sample after a load; after a clear let reloadArchive
+      // fall back to whatever is left (or the empty state).
+      await reloadArchive();
+    } catch (err) {
+      el("#sample-tools-note").textContent = `失敗しました: ${err}`;
+    } finally {
+      for (const b of [btn, emptyBtn]) b.disabled = false;
+      emptyBtn.textContent = "サンプルの議事録を読み込む";
+    }
   }
 
   init();

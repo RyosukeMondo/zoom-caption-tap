@@ -316,5 +316,27 @@
     return results;
   }
 
-  global.MeetingSamples = { seed };
+  // Sample ids are all prefixed, which is what lets them be told apart from
+  // real meetings (those get `m-<timestamp>` from MeetingArchive.build) without
+  // adding a field to the stored schema. Detection stays correct even for
+  // records written by an older version.
+  const PREFIX = "seed-";
+
+  function isSample(id) {
+    return typeof id === "string" && id.startsWith(PREFIX);
+  }
+
+  /** Removes every sample meeting, leaving real ones untouched. */
+  async function clear() {
+    const all = await MeetingArchive.list();
+    const samples = all.filter((m) => isSample(m.id));
+    for (const m of samples) await MeetingArchive.remove(m.id);
+    return samples.length;
+  }
+
+  async function count() {
+    return (await MeetingArchive.list()).filter((m) => isSample(m.id)).length;
+  }
+
+  global.MeetingSamples = { seed, clear, count, isSample, PREFIX };
 })(self);

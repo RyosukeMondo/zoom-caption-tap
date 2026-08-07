@@ -157,6 +157,35 @@
   #load-samples-btn:hover:not(:disabled) { border-color: var(--fg); }
   #load-samples-btn:disabled { opacity: 0.6; cursor: default; }
 
+  #sample-tools { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
+  #sample-toggle-btn {
+    font: inherit;
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  #sample-toggle-btn:hover:not(:disabled) { border-color: var(--fg); color: var(--fg); }
+  #sample-toggle-btn:disabled { opacity: 0.6; cursor: default; }
+  #sample-tools-note { margin: 6px 0 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+  /* Marks sample rows in the picker so they are never mistaken for a real
+     meeting once both are in the list together. */
+  .sample-badge {
+    display: inline-block;
+    margin-right: 5px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--chip);
+    color: var(--chip-fg);
+    font-size: 10px;
+    font-weight: 600;
+    vertical-align: 1px;
+  }
+
   /* Header meta row */
   #meeting-meta {
     display: flex;
@@ -358,6 +387,15 @@
       <h1>会議ダッシュボード</h1>
       <p id="sidebar-empty" hidden>アーカイブされた会議はまだありません。</p>
       <ul id="meeting-list"></ul>
+
+      <!-- Lives in the sidebar rather than the empty state so it stays
+           reachable after samples are loaded — otherwise loading them once
+           is a one-way door with no way back. Label and action flip based on
+           whether samples are currently present. -->
+      <div id="sample-tools">
+        <button id="sample-toggle-btn" type="button"></button>
+        <p id="sample-tools-note"></p>
+      </div>
     </nav>
 
     <main id="content" tabindex="-1">
