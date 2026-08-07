@@ -62,6 +62,16 @@ Roughly in the order they seemed to want them.
       ask behind 商談フィードバック. What shipped is deterministic metrics; what
       was wanted is feedback grounded in his 師匠's material. That is RAG, and
       it is the part competitors cannot copy. Explicitly a separate product.
+
+      2026-08 narrowed the gap without the backend: the analysis now covers
+      *discovery structure* — open vs closed questions, a six-topic 現状/課題/
+      影響/予算/決裁/時期 checklist, and objections with whether the seller
+      asked back — and compares a call against **the seller's own past calls**
+      rather than a generic rule. The frameworks are ordinary qualification
+      practice implemented as our own string matching; no third-party material
+      is bundled, which also keeps a licensed corpus out of a clonable client.
+      What still needs the backend is 師匠-specific advice, which no amount of
+      regex gets to.
 - [ ] **Enterprise RAG over internal docs** (the call-centre pitch, incl. the
       電気ポット / 電気ケトル synonym problem). Bespoke, deal-by-deal.
 - [ ] **Hosted 議事録 site** as an upsell tier.

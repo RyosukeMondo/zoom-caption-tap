@@ -28,6 +28,20 @@ timestamp. There is no audio. Therefore:
 When adding a metric, ask: can a user trace this to a timestamp or a string
 match? If not, do not ship it.
 
+The discovery metrics added in 2026-08 (open/closed questions, the six-topic
+coverage checklist, objection detection) are all string matches, and every one
+of them shows the line that produced it — the checklist quotes the utterance
+that ticked it. That is deliberate: a bare `✓ 予算` asks the user to trust a
+regex, and the first time it is wrong they stop believing the whole panel.
+Coverage regexes are therefore tuned to **miss rather than over-claim** — bare
+`開始` used to match 「運用開始後のサポート」 and report 時期 as covered, and
+bare `どれくらい` lit up 影響 on any call that mentioned price. Both are now
+regression cases in `tools/check-coaching.js`.
+
+The seller's own baseline (`baseline()`) refuses to return anything below
+`MIN_BASELINE_MEETINGS` (3) for the same reason: "your average" computed from
+one previous call is an invented metric wearing a number.
+
 ## No model in the coaching path
 
 `coaching.js` is deterministic JavaScript. Gemini Nano is deliberately not
@@ -75,10 +89,18 @@ Useful commands:
 
 ```bash
 node --check poc/<file>.js                     # syntax
-# element-id contract: every $("id") / el("#id") must exist in the HTML
-# unit-test storage/coaching logic against a stubbed chrome.storage — see
-# git log for examples of driving archive.js + samples.js under node
+node tools/check-coaching.js                   # coaching.js + both renderers
+# unit-test storage logic against a stubbed chrome.storage — see git log for
+# examples of driving archive.js + samples.js under node
 ```
+
+`tools/check-coaching.js` covers the three things hand-tracing keeps missing:
+the realtime branches (every live nudge sits behind a 90s/5min/15min threshold,
+so the 4-minute sample call reaches none of them), the element-id contract, and
+what the renderers actually put on screen. It found a real false positive and a
+`QUESTION_RE` gap on its first run — 「〜ましたか」「〜ませんか」 were never
+matched, so every past-tense discovery question went uncounted. Add a case to it
+when you touch a regex; that is where the regressions live.
 
 ## Deploying to the Windows test box
 

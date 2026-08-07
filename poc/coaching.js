@@ -40,7 +40,13 @@
   // pausing for breath.
   const CUSTOMER_SILENT_MS = 180000;
 
-  const QUESTION_RE = /[?？]\s*$|(?:ですか|ますか|でしょうか|ますかね|かな|どう(?:です|でしょう)|いかが)[。．…]?\s*$/;
+  // Polite Japanese puts the question marker at the end, so this matches on the
+  // sentence-final form. The past and negative forms (ましたか / ませんか /
+  // でしたか) were missing until 2026-08: 「どうお考えでしたか」 simply did not
+  // count as a question, which under-reported every seller who asks about what
+  // a customer has already tried — exactly the discovery questions that matter.
+  const QUESTION_RE =
+    /[?？]\s*$|(?:ですか|ですかね|ますか|ますかね|ましたか|ませんか|ましょうか|でしたか|でしょうか|ますでしょうか|ませんでしょうか|かな|どう(?:です|でしょう)|いかが)[。．…]?\s*$/;
 
   // Zoom's own ASR often drops fillers before they ever reach us, so a low
   // count is not evidence of clean speech. The UI has to say that rather than
@@ -49,6 +55,79 @@
 
   const NEXT_STEP_RE =
     /(次回|次の(?:お)?打ち合わせ|日程|スケジュール|改めて|お見積|見積り|見積もり|ご提案|提案書|持ち帰|検討いた|ご連絡いたし|アポ)/;
+
+  // An "open" question invites an explanation; a closed one can be answered
+  // やはい/いいえ. The distinction is the whole of discovery quality, and it is
+  // the reason a raw question *count* flatters a seller who only ever asks
+  // 「ご興味ありますか」. Detected by interrogative, not by sentiment, so a user
+  // can always see which word made it open.
+  const OPEN_Q_RE =
+    /(何|なに|なん[のでか]|どう(?:いう|やって|いった)?|どのよう|どの|どれ|どんな|どういっ|なぜ|どうして|いつ(?:頃)?|どこ|どちら|誰|だれ|いかが|教えて(?:いただ|くださ)|聞かせて|お聞かせ)/;
+
+  // Discovery coverage. Each topic is the kind of thing a seller is supposed to
+  // leave a first meeting knowing; leaving one blank is the single most common
+  // reason a deal stalls later for reasons nobody wrote down.
+  //
+  // These are ordinary qualification topics (current state / pain / impact /
+  // budget / decision process / timing), expressed here as our own keyword
+  // sets. A hit always carries the line that produced it, so "予算に触れた" can
+  // be checked against the transcript rather than believed.
+  const COVERAGE = [
+    {
+      key: "current",
+      label: "現状",
+      re: /(現在|今[はの]|既存|使って(?:いる|います|らっしゃ)|運用され|運用して|体制|今のところ|現状)/,
+    },
+    {
+      key: "problem",
+      label: "課題",
+      re: /(課題|困って|お困り|問題|悩み|不便|手間|大変|うまくいっ(?:て|ていな)|ボトルネック|ペイン)/,
+    },
+    {
+      // Deliberately not matching bare どれくらい／どのくらい: they are just as
+      // often asking a price, which would light up 影響 on every call that
+      // mentioned money and make the checklist worthless.
+      key: "impact",
+      label: "影響",
+      re: /(影響|工数|時間がかか|手間がかか|残業|負荷|損失|機会損失|件数|人日|生産性|効果|インパクト)/,
+    },
+    {
+      key: "budget",
+      label: "予算",
+      re: /(予算|費用|金額|お値段|価格|コスト感|ご予算|いくら|料金)/,
+    },
+    {
+      key: "authority",
+      label: "決裁",
+      re: /(決裁|決定|ご判断|稟議|承認|上司|役員|部長|社長|決められ|意思決定|どなたが)/,
+    },
+    {
+      // Bare 開始 used to be here and matched 「運用開始後のサポート」 — a
+      // support promise, not a timing answer. Anything that only means "starts"
+      // has to carry a when- word beside it to count.
+      key: "timing",
+      label: "時期",
+      re: /(時期|いつ(?:頃|から|まで)|スケジュール|導入(?:時期|は?いつ)|開始(?:時期|時点|は?いつ)|来月|再来月|来期|今期|年度内|納期|タイミング)/,
+    },
+  ];
+
+  // A customer concern. Detecting it is easy; the useful part is whether the
+  // seller did anything about it, which is why every hit is paired with a
+  // window afterwards (below) rather than just counted.
+  const OBJECTION_RE =
+    /(高い|高く|予算(?:が|は)(?:厳し|合わ|足り)|厳しい|難しい|不安|リスク|心配|他社|比較|検討し(?:ます|たい)|持ち帰(?:り|ります)|今[はじ]ゃ?ない|時期尚早|必要(?:性|ない)|うちには)/;
+
+  // How long after a concern the seller still counts as having responded to it.
+  // Past this the conversation has moved on and the objection was dropped.
+  const OBJECTION_WINDOW_MS = 120000;
+
+  // No open question for this long, mid-call, means the call has stopped being
+  // discovery and become a presentation.
+  const OPEN_Q_DROUGHT_MS = 300000;
+
+  // Only start nagging about unchecked coverage once the call is long enough
+  // that there was realistically time to get to it.
+  const COVERAGE_REMINDER_MS = 900000;
 
   /** Groups a speaker's utterances into continuous runs. */
   function runsFor(transcript, name) {
@@ -83,6 +162,72 @@
 
   function countQuestions(transcript, name) {
     return transcript.filter((l) => (l.speaker || "") === name && QUESTION_RE.test((l.text || "").trim())).length;
+  }
+
+  /** Every question `name` asked, split by whether it invites an explanation. */
+  function questionsFor(transcript, name) {
+    const open = [];
+    const closed = [];
+    for (const l of transcript) {
+      if ((l.speaker || "") !== name) continue;
+      const text = (l.text || "").trim();
+      if (!QUESTION_RE.test(text)) continue;
+      const hit = { at: l.at, speaker: l.speaker, text };
+      if (OPEN_Q_RE.test(text)) open.push(hit);
+      else closed.push(hit);
+    }
+    return { open, closed };
+  }
+
+  /**
+   * Which qualification topics came up, and the line that first raised each.
+   *
+   * Counts the topic as covered whoever said it — a customer volunteering
+   * 「予算は300万くらい」 covers budget just as well as the seller asking, and
+   * marking it uncovered because the seller did not personally say the word
+   * would be pedantry the user would immediately disbelieve.
+   */
+  function coverageOf(transcript) {
+    return COVERAGE.map((topic) => {
+      const line = transcript.find((l) => topic.re.test(l.text || "")) ?? null;
+      return {
+        key: topic.key,
+        label: topic.label,
+        covered: Boolean(line),
+        at: line?.at ?? null,
+        speaker: line?.speaker ?? null,
+        text: line?.text ?? "",
+      };
+    });
+  }
+
+  /**
+   * Customer concerns, each marked with whether the seller engaged with it.
+   *
+   * "Addressed" deliberately means the seller *asked something* afterwards, not
+   * merely that they spoke: talking over an objection is the failure mode this
+   * is meant to catch, so a monologue in reply counts as unaddressed.
+   */
+  function objectionsOf(transcript, seller) {
+    const sorted = [...transcript].sort((a, b) => a.at - b.at);
+    const out = [];
+
+    for (const line of sorted) {
+      const who = line.speaker || "";
+      if (who === seller) continue;
+      if (!OBJECTION_RE.test(line.text || "")) continue;
+
+      const replied = sorted.some(
+        (l) =>
+          (l.speaker || "") === seller &&
+          l.at > line.at &&
+          l.at - line.at <= OBJECTION_WINDOW_MS &&
+          QUESTION_RE.test((l.text || "").trim()),
+      );
+
+      out.push({ at: line.at, speaker: who, text: line.text || "", addressed: replied });
+    }
+    return out;
   }
 
   function countFillers(transcript, name) {
@@ -167,6 +312,11 @@
 
     const nextStep = transcript.find((l) => NEXT_STEP_RE.test(l.text || "")) ?? null;
 
+    const sellerQuestions = questionsFor(transcript, seller);
+    const coverage = coverageOf(transcript);
+    const objections = objectionsOf(transcript, seller);
+    const askedTotal = sellerQuestions.open.length + sellerQuestions.closed.length;
+
     return {
       seller,
       customers: others,
@@ -181,6 +331,16 @@
         .map((r) => ({ startAt: r.startAt, ms: r.ms, preview: r.lines[0]?.text ?? "" })),
       questionsBySeller: countQuestions(transcript, seller),
       questionsByCustomer: others.reduce((sum, n) => sum + countQuestions(transcript, n), 0),
+      openQuestions: sellerQuestions.open,
+      closedQuestions: sellerQuestions.closed,
+      // Null rather than 0 when nothing was asked: "0% open" reads as a
+      // judgement on the questions, and there were none to judge.
+      openQuestionRate: askedTotal > 0 ? sellerQuestions.open.length / askedTotal : null,
+      coverage,
+      coveredCount: coverage.filter((c) => c.covered).length,
+      coverageTotal: coverage.length,
+      objections,
+      unresolvedObjections: objections.filter((o) => !o.addressed),
       fillersBySeller: countFillers(transcript, seller),
       sellerChars: transcript.reduce(
         (sum, l) => sum + ((l.speaker || "") === seller ? (l.text || "").length : 0),
@@ -195,6 +355,56 @@
     };
   }
 
+  // Below this many past meetings there is no such thing as "your average" —
+  // one previous call is an anecdote, and dressing it up as a personal baseline
+  // would be exactly the invented metric this codebase refuses to ship.
+  const MIN_BASELINE_MEETINGS = 3;
+
+  function median(xs) {
+    const v = xs.filter((x) => typeof x === "number" && Number.isFinite(x)).sort((a, b) => a - b);
+    if (!v.length) return null;
+    return v[Math.floor(v.length / 2)];
+  }
+
+  /**
+   * The seller's own history, from meetings already in the archive.
+   *
+   * This is what makes the feedback theirs rather than generic: a 60% talk
+   * ratio means nothing in the abstract, but "higher than your usual 44%" is
+   * something the person can act on, and it cannot be cloned out of the
+   * extension source because it is built from their own past calls.
+   *
+   * Returns null below MIN_BASELINE_MEETINGS rather than a shaky average.
+   */
+  function baseline(records, seller, { excludeId = null } = {}) {
+    if (!Array.isArray(records) || !seller) return null;
+
+    const reports = records
+      .filter((r) => r && r.id !== excludeId)
+      .map((r) => analyze(r, seller))
+      .filter(Boolean);
+
+    if (reports.length < MIN_BASELINE_MEETINGS) {
+      return { meetings: reports.length, enough: false };
+    }
+
+    const coverageRate = {};
+    for (const topic of COVERAGE) {
+      const hits = reports.filter((rep) => rep.coverage.find((c) => c.key === topic.key)?.covered).length;
+      coverageRate[topic.key] = hits / reports.length;
+    }
+
+    return {
+      meetings: reports.length,
+      enough: true,
+      talkRatio: median(reports.map((r) => r.talkRatio)),
+      openQuestionRate: median(reports.map((r) => r.openQuestionRate)),
+      questionsBySeller: median(reports.map((r) => r.questionsBySeller)),
+      coveredCount: median(reports.map((r) => r.coveredCount)),
+      coverageRate,
+    };
+  }
+
   /**
    * Observations worth showing, ordered most-actionable first.
    *
@@ -204,11 +414,12 @@
    * it also reports what is happening right now (mid-monologue, customer gone
    * quiet), not just what already happened.
    */
-  function nudges(report, { liveNowMs = null } = {}) {
+  function nudges(report, { liveNowMs = null, baseline: base = null } = {}) {
     if (!report) return [];
     const out = [];
     const mins = (ms) => Math.round(ms / 60000);
     const secs = (ms) => Math.round(ms / 1000);
+    const pctOf = (x) => Math.round(x * 100);
 
     if (report.talkRatio != null) {
       const pct = Math.round(report.talkRatio * 100);
@@ -253,6 +464,92 @@
         metric: "questions",
         text: `質問を${report.questionsBySeller}回しています（お客様からは${report.questionsByCustomer}回）。`,
       });
+    }
+
+    // Question *quality*. A high count made entirely of 「〜ですよね」 is worse
+    // than three questions that made the customer explain something, so this is
+    // reported separately rather than folded into the count above.
+    if (report.openQuestionRate != null) {
+      const openN = report.openQuestions.length;
+      const closedN = report.closedQuestions.length;
+      if (report.openQuestionRate < 0.3) {
+        out.push({
+          level: "warn",
+          metric: "openQuestions",
+          text: `「はい／いいえ」で答えられる質問が中心です（オープン${openN}件・クローズド${closedN}件）。「どのように」「なぜ」で始まる質問を増やすと、背景を話していただけます。`,
+        });
+      } else {
+        out.push({
+          level: "ok",
+          metric: "openQuestions",
+          text: `オープンな質問が${openN}件（全${openN + closedN}件中）。相手に説明していただく形になっています。`,
+        });
+      }
+    }
+
+    // Coverage. Named explicitly — "3/6 covered" is useless without knowing
+    // which three are missing, since 予算 and 決裁 are the ones that sink deals.
+    const missing = report.coverage.filter((c) => !c.covered);
+    if (missing.length) {
+      out.push({
+        level: missing.length >= 3 ? "warn" : "info",
+        metric: "coverage",
+        text: `未確認の項目があります：${missing.map((c) => c.label).join("・")}。次回までに押さえておきたい点です。`,
+      });
+    } else {
+      out.push({
+        level: "ok",
+        metric: "coverage",
+        text: "現状・課題・影響・予算・決裁・時期のすべてに触れています。",
+      });
+    }
+
+    // An objection nobody answered is the most expensive thing in the call.
+    if (report.unresolvedObjections.length) {
+      const first = report.unresolvedObjections[0];
+      out.push({
+        level: "warn",
+        metric: "objections",
+        text: `お客様の懸念に質問で返せていない箇所が${report.unresolvedObjections.length}件あります（例:「${first.text.slice(0, 30)}」）。掘り下げる質問で背景を確認しましょう。`,
+      });
+    } else if (report.objections.length) {
+      out.push({
+        level: "ok",
+        metric: "objections",
+        text: `お客様の懸念${report.objections.length}件すべてに質問で応じています。`,
+      });
+    }
+
+    // Comparison against the seller's own past calls. Deliberately last among
+    // the post-hoc items: it is context for the numbers above, not a finding of
+    // its own, and it only appears once there is enough history to mean it.
+    if (base?.enough) {
+      if (report.talkRatio != null && base.talkRatio != null) {
+        const d = report.talkRatio - base.talkRatio;
+        if (Math.abs(d) >= 0.1) {
+          out.push({
+            level: d > 0 ? "warn" : "info",
+            metric: "baselineTalkRatio",
+            text: `発言比率${pctOf(report.talkRatio)}%は、直近${base.meetings}件の平均${pctOf(base.talkRatio)}%より${d > 0 ? "高め" : "低め"}です。`,
+          });
+        }
+      }
+      if (report.openQuestionRate != null && base.openQuestionRate != null) {
+        const d = report.openQuestionRate - base.openQuestionRate;
+        if (d <= -0.15) {
+          out.push({
+            level: "warn",
+            metric: "baselineOpenQuestions",
+            text: `オープンな質問の割合${pctOf(report.openQuestionRate)}%は、普段の${pctOf(base.openQuestionRate)}%を下回っています。`,
+          });
+        } else if (d >= 0.15) {
+          out.push({
+            level: "ok",
+            metric: "baselineOpenQuestions",
+            text: `オープンな質問の割合${pctOf(report.openQuestionRate)}%は、普段の${pctOf(base.openQuestionRate)}%を上回っています。`,
+          });
+        }
+      }
     }
 
     if (report.customerShareFirstHalf != null && report.customerShareSecondHalf != null) {
@@ -306,6 +603,54 @@
           text: `お客様の発言が${mins(sinceCustomer)}分ありません。問いかけてみましょう。`,
         });
       }
+
+      // Still talking, right now, past the monologue threshold. The post-hoc
+      // version of this tells you what you did; only this one can stop it.
+      if (report.currentRunMs != null && report.currentRunMs >= MONOLOGUE_MS) {
+        out.unshift({
+          level: "warn",
+          metric: "monologueNow",
+          text: `${secs(report.currentRunMs)}秒続けて話しています。一度区切って、相手に確認しましょう。`,
+        });
+      }
+
+      // Discovery has stalled: questions may still be flowing, but none of them
+      // are asking the customer to explain anything.
+      const lastOpen = report.openQuestions.length
+        ? report.openQuestions[report.openQuestions.length - 1].at
+        : report.meetingStartAt;
+      const sinceOpen = liveNowMs - lastOpen;
+      if (Number.isFinite(sinceOpen) && sinceOpen >= OPEN_Q_DROUGHT_MS) {
+        out.unshift({
+          level: "warn",
+          metric: "openQuestionDrought",
+          text: `${mins(sinceOpen)}分間、オープンな質問がありません。「どのように」「なぜ」で背景を伺いましょう。`,
+        });
+      }
+
+      // A concern raised and not yet picked up, while there is still time to.
+      const openObjection = report.unresolvedObjections.find(
+        (o) => liveNowMs - o.at <= OBJECTION_WINDOW_MS,
+      );
+      if (openObjection) {
+        out.unshift({
+          level: "warn",
+          metric: "objectionNow",
+          text: `「${openObjection.text.slice(0, 24)}」への確認がまだです。今のうちに掘り下げましょう。`,
+        });
+      }
+
+      // Late in a long call, name what is still unknown while it can still be
+      // asked rather than written up as a gap afterwards.
+      const elapsed = liveNowMs - report.meetingStartAt;
+      const stillMissing = report.coverage.filter((c) => !c.covered);
+      if (elapsed >= COVERAGE_REMINDER_MS && stillMissing.length) {
+        out.push({
+          level: "info",
+          metric: "coverageNow",
+          text: `未確認：${stillMissing.map((c) => c.label).join("・")}。残り時間で確認しておきましょう。`,
+        });
+      }
     }
 
     return out;
@@ -318,7 +663,7 @@
   }
 
   /** analyze() + the per-speaker last-spoke map the live nudges need. */
-  function analyzeLive(record, seller, nowMs) {
+  function analyzeLive(record, seller, nowMs, { baseline: base = null } = {}) {
     const report = analyze(record, seller);
     if (!report) return { report: null, nudges: [] };
     report._lastAt = {};
@@ -326,7 +671,17 @@
       const n = l.speaker || "";
       report._lastAt[n] = Math.max(report._lastAt[n] ?? 0, l.at);
     }
-    return { report, nudges: nudges(report, { liveNowMs: nowMs }) };
+
+    // How long the seller has been talking *without stopping, as of now*.
+    // Null unless they are actually mid-run: once the gap exceeds RUN_GAP_MS
+    // the run is over, and reporting its length as ongoing would nag someone
+    // for a monologue they already ended.
+    const runs = runsFor(record.transcript, seller);
+    const last = runs[runs.length - 1] ?? null;
+    report.currentRunMs =
+      last && nowMs - last.lastAt <= RUN_GAP_MS ? nowMs - last.startAt : null;
+
+    return { report, nudges: nudges(report, { liveNowMs: nowMs, baseline: base }) };
   }
 
   // Which speaker is "me" is a UI preference, not meeting data, so it lives
@@ -359,8 +714,19 @@
     QUESTION_RE,
     FILLERS,
     NEXT_STEP_RE,
+    OPEN_Q_RE,
+    OBJECTION_RE,
+    OBJECTION_WINDOW_MS,
+    OPEN_Q_DROUGHT_MS,
+    COVERAGE_REMINDER_MS,
+    COVERAGE,
+    MIN_BASELINE_MEETINGS,
     analyze,
     analyzeLive,
     nudges,
+    baseline,
+    questionsFor,
+    coverageOf,
+    objectionsOf,
   };
 })(self);

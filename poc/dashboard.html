@@ -273,6 +273,34 @@
   .coaching-nudge-ok { border-left-color: var(--ok); }
   .coaching-nudge-info { border-left-color: var(--muted); }
 
+  .coaching-coverage { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .coaching-coverage li {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--chip);
+    font-size: 12px;
+    max-width: 100%;
+  }
+  .coaching-coverage .mark { font-weight: 700; flex: none; }
+  .coaching-coverage .label { font-weight: 600; flex: none; }
+  /* The matched line is the evidence for the tick, so it is shown rather than
+     hidden behind a tooltip — but it must never push the chip off the row. */
+  .coaching-coverage .quote {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 22em;
+  }
+  .coaching-coverage .covered .mark { color: var(--ok); }
+  .coaching-coverage .missing { opacity: 0.75; }
+  .coaching-coverage .missing .mark { color: var(--warn); }
+  .coaching-coverage-note { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+
   .coaching-monologues { list-style: none; margin: 0; padding: 0; }
   .coaching-monologues li { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
   .coaching-monologues .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
@@ -557,6 +585,14 @@
             </div>
 
             <div id="coaching-tiles" class="note-grid"></div>
+
+            <div class="coaching-block">
+              <h4>ヒアリング項目</h4>
+              <ul id="coaching-coverage-list" class="coaching-coverage"></ul>
+              <p class="coaching-coverage-note">
+                書き起こしに該当する発言があった項目にチェックが入ります。文言での判定のため、言い回しによっては拾えないことがあります。
+              </p>
+            </div>
 
             <div class="coaching-block">
               <h4>気づき</h4>

@@ -716,6 +716,27 @@ function coachNudgeLi(n) {
 // behind a closed <details> instead of being dropped.
 const COACH_VISIBLE_NUDGES = 2;
 
+/** Qualification chips: ✓ once a topic has come up, ○ while it has not.
+ *  Mid-call this is the fastest way to see what is still unasked, which is the
+ *  one thing a post-meeting report can never help with. */
+function renderCoachCoverage(coverage) {
+  const list = $("coach-coverage");
+  if (!coverage || !coverage.length) {
+    list.replaceChildren();
+    return;
+  }
+  list.replaceChildren(
+    ...coverage.map((c) => {
+      const li = document.createElement("li");
+      li.className = c.covered ? "covered" : "missing";
+      li.textContent = `${c.covered ? "✓" : "○"}${c.label}`;
+      // The matched line is the evidence; hover rather than clutter the chip.
+      if (c.covered && c.text) li.title = `${c.speaker || ""}: ${c.text}`;
+      return li;
+    }),
+  );
+}
+
 function renderCoachNudges(items) {
   const list = $("coach-nudges");
   const moreWrap = $("coach-nudges-more");
@@ -786,6 +807,7 @@ function renderCoach() {
     $("coach-ratio-fill").style.width = "0%";
     $("coach-ratio-fill").className = "";
     $("coach-ratio-pct").textContent = "—";
+    renderCoachCoverage(null);
     renderCoachNudges([]);
     return;
   }
@@ -798,6 +820,7 @@ function renderCoach() {
   fill.className = talkNudge ? talkNudge.level : "";
   $("coach-ratio-pct").textContent = pct != null ? `${pct}%` : "—";
 
+  renderCoachCoverage(report.coverage);
   renderCoachNudges(items);
 }
 

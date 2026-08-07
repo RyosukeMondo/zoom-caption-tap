@@ -477,10 +477,47 @@
     }
   }
 
-  function renderCoachingNudges(report) {
+  /**
+   * The qualification checklist, each row carrying the line that justifies it.
+   *
+   * Showing the matched utterance is the point: a bare "✓ 予算" asks the user to
+   * trust a regex, and the first time it is wrong they stop trusting the whole
+   * panel. With the quote visible they can see exactly why it ticked.
+   */
+  function renderCoachingCoverage(report) {
+    const list = el("#coaching-coverage-list");
+    clearChildren(list);
+    for (const c of report.coverage) {
+      const li = document.createElement("li");
+      li.className = c.covered ? "covered" : "missing";
+
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = c.covered ? "✓" : "×";
+
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = c.label;
+
+      li.appendChild(mark);
+      li.appendChild(label);
+
+      if (c.covered) {
+        const quote = document.createElement("span");
+        quote.className = "quote";
+        quote.textContent = c.text;
+        // Full text on hover, since the visible line is clipped to one row.
+        quote.title = `${c.speaker || ""}: ${c.text}`;
+        li.appendChild(quote);
+      }
+      list.appendChild(li);
+    }
+  }
+
+  function renderCoachingNudges(report, baseline) {
     const list = el("#coaching-nudges");
     clearChildren(list);
-    const items = MeetingCoach.nudges(report);
+    const items = MeetingCoach.nudges(report, { baseline });
     if (items.length === 0) {
       renderEmpty(list, "li", "empty");
       return;
@@ -516,7 +553,7 @@
   }
 
   /** Renders the panel (or the appropriate degraded state) for a given seller name. */
-  function renderCoachingFeedback(record, sellerName) {
+  function renderCoachingFeedback(record, sellerName, baseline = null) {
     const prompt = el("#coaching-seller-prompt");
     const panel = el("#coaching-panel");
 
@@ -539,9 +576,34 @@
     panel.hidden = false;
     renderCoachingTalkRatio(report);
     renderCoachingTiles(report);
-    renderCoachingNudges(report);
+    renderCoachingCoverage(report);
+    renderCoachingNudges(report, baseline);
     renderCoachingNextStep(report);
     renderCoachingMonologues(record, report);
+  }
+
+  /**
+   * The seller's own history, for comparison against this call.
+   *
+   * Loads every archived meeting rather than a window: the archive is capped at
+   * MAX_MEETINGS (50), so this stays bounded, and a seller with few calls needs
+   * all of them before a baseline means anything. Failure is non-fatal — the
+   * baseline is context, and losing it must not take the panel down with it.
+   */
+  async function coachingBaseline(record, sellerName) {
+    if (!sellerName) return null;
+    try {
+      const summaries = await MeetingArchive.list();
+      const records = [];
+      for (const s of summaries) {
+        const full = await MeetingArchive.load(s.id);
+        if (full) records.push(full);
+      }
+      return MeetingCoach.baseline(records, sellerName, { excludeId: record.id });
+    } catch (e) {
+      console.warn("[dashboard] baseline unavailable", e);
+      return null;
+    }
   }
 
   /** Populates the seller picker and loads the persisted choice for this meeting. */
@@ -551,7 +613,24 @@
     if (!currentRecord || currentRecord.id !== record.id) return; // meeting changed mid-flight
     const names = record.speakers.map((s) => s.name);
     el("#coaching-seller-select").value = seller && names.includes(seller) ? seller : UNSET_SELLER_VALUE;
+    // Draw immediately, then fold in the baseline once the archive has been
+    // read. Blocking the whole panel on N storage reads would leave the user
+    // staring at nothing for the sake of one comparison line.
     renderCoachingFeedback(record, seller);
+    await applyCoachingBaseline(record, seller);
+  }
+
+  /** Re-renders the panel with the seller's history once it has loaded. */
+  async function applyCoachingBaseline(record, seller) {
+    if (!seller) return;
+    const base = await coachingBaseline(record, seller);
+    if (!base?.enough) return;
+    if (!currentRecord || currentRecord.id !== record.id) return; // meeting changed mid-flight
+    // The picker can move while the archive is being read; re-rendering for a
+    // seller the user has already changed away from would show stale analysis.
+    const shown = el("#coaching-seller-select").value;
+    if (shown !== seller) return;
+    renderCoachingFeedback(record, seller, base);
   }
 
   async function handleCoachingSellerChange() {
@@ -562,6 +641,7 @@
     await MeetingCoach.setSeller(record.id, name);
     if (currentRecord !== record) return; // meeting changed mid-flight
     renderCoachingFeedback(record, name);
+    await applyCoachingBaseline(record, name);
   }
 
   /** One-time setup of the healthy-talk-ratio band, sized from MeetingCoach's
