@@ -316,37 +316,64 @@
   // Saved note (topics / decisions / actions / questions / keywords)
   // ---------------------------------------------------------------------
 
+  // Stored buckets hold accumulator objects ({ text, count, firstSeen, lastSeen });
+  // older notes may still hold plain strings. Normalise both to the object shape
+  // so nothing gets stringified into "[object Object]".
+  function normaliseEntries(items) {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item) => {
+        if (item == null) return null;
+        if (typeof item === "object") {
+          const text = typeof item.text === "string" ? item.text : "";
+          return text.trim() === "" ? null : { text, count: Number(item.count) || 1, firstSeen: Number(item.firstSeen) || 0 };
+        }
+        const text = String(item);
+        return text.trim() === "" ? null : { text, count: 1, firstSeen: 0 };
+      })
+      .filter((x) => x != null)
+      .sort((a, b) => b.count - a.count || a.firstSeen - b.firstSeen);
+  }
+
+  function renderEmpty(parent, tag, className) {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = "—";
+    parent.appendChild(node);
+  }
+
   function renderList(ul, items) {
     clearChildren(ul);
-    const arr = Array.isArray(items) ? items.filter((x) => x != null && String(x).trim() !== "") : [];
+    const arr = normaliseEntries(items);
     if (arr.length === 0) {
-      const li = document.createElement("li");
-      li.className = "empty";
-      li.textContent = "—";
-      ul.appendChild(li);
+      renderEmpty(ul, "li", "empty");
       return;
     }
     for (const item of arr) {
       const li = document.createElement("li");
-      li.textContent = String(item);
+      li.textContent = item.text;
+      // Repeated mentions carry signal — surface them the way the side panel does.
+      if (item.count > 1) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = `×${item.count}`;
+        li.append(" ", badge);
+      }
       ul.appendChild(li);
     }
   }
 
   function renderKeywords(container, items) {
     clearChildren(container);
-    const arr = Array.isArray(items) ? items.filter((x) => x != null && String(x).trim() !== "") : [];
+    const arr = normaliseEntries(items);
     if (arr.length === 0) {
-      const span = document.createElement("span");
-      span.className = "empty";
-      span.textContent = "—";
-      container.appendChild(span);
+      renderEmpty(container, "span", "empty");
       return;
     }
     for (const kw of arr) {
       const span = document.createElement("span");
       span.className = "chip";
-      span.textContent = String(kw);
+      span.textContent = kw.count > 1 ? `${kw.text} ×${kw.count}` : kw.text;
       container.appendChild(span);
     }
   }
