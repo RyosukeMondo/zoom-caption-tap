@@ -282,6 +282,50 @@ console.log("\n[replay]");
 }
 
 // ---------------------------------------------------------------------------
+// Feature availability. Analysis living in coaching.js is worth nothing if no
+// surface renders it, and that is a silent failure — everything still passes,
+// the feature simply cannot be reached. The own-history baseline and the replay
+// were both dashboard-only for a while without anything noticing.
+//
+// Both surfaces are checked because they serve different moments: the side panel
+// is what a seller has open during and just after a call, the dashboard is where
+// they review properly. A feature present in only one is only half-shipped.
+// ---------------------------------------------------------------------------
+console.log("\n[feature availability]");
+{
+  const side = fs.readFileSync(path.join(POC, "sidepanel.js"), "utf8");
+  const dash = fs.readFileSync(path.join(POC, "dashboard.js"), "utf8");
+
+  for (const [feature, needle] of [
+    ["own-history baseline", "baseline"],
+    ["coverage checklist", "coverage"],
+    ["replay scrubber", "replay"],
+    ["frameAt lookup", "frameAt"],
+    ["live/post-hoc split", "LIVE_METRICS"],
+  ]) {
+    check(`side panel uses ${feature}`, new RegExp(needle, "i").test(side));
+    check(`dashboard uses ${feature}`, new RegExp(needle, "i").test(dash));
+  }
+
+  // Passing the baseline is the whole point of computing it — a call site that
+  // drops the option silently reverts to generic advice.
+  check(
+    "side panel passes baseline into nudges/analyzeLive",
+    /nudges\(report,\s*\{\s*baseline/.test(side) && /baseline:\s*coachBaseline/.test(side),
+  );
+  check(
+    "dashboard passes baseline into nudges",
+    /nudges\(report,\s*\{\s*baseline/.test(dash),
+  );
+
+  // Reading the archive on every 30s tick would be a real regression, not a
+  // stylistic one, so the cache key is asserted rather than assumed.
+  check("side panel caches the baseline", /coachBaselineKey/.test(side));
+  check("side panel caches the replay", /coachReplayKey/.test(side));
+  check("dashboard caches the replay", /currentReplayKey/.test(dash));
+}
+
+// ---------------------------------------------------------------------------
 // Element-id contract: every $("id") / el("#id") must have markup.
 // ---------------------------------------------------------------------------
 console.log("\n[element-id contract]");

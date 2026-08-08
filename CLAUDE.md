@@ -123,6 +123,25 @@ point, ends 4/6 on coverage with 決裁 and 時期 never raised, and leaves one
 objection talked over and one handled. Its shape is asserted in the checks —
 if a regex change makes 決裁 tick, the demo silently stops showing a gap.
 
+### A feature exists only where it is rendered
+
+Analysis in `coaching.js` is worth nothing until a surface draws it, and that
+failure is silent — every check passes, the feature simply cannot be reached.
+The own-history baseline and the replay scrubber were both dashboard-only for
+several commits before anyone noticed.
+
+There are two surfaces and they serve different moments: **the side panel** is
+what a seller has open during and just after a call, **the dashboard** is where
+they review properly. Something present in only one is half-shipped. A third
+place has to be updated too — `docs/index.html` is the only thing a
+non-technical user reads, so a feature missing from it is invisible in practice.
+
+`check-coaching.js` has a `[feature availability]` block asserting both surfaces
+consume each capability and that the baseline is actually *passed* into
+`nudges()` rather than merely imported. Anything that reads the archive from a
+render path must be cached by `(meetingId, seller)` — the side panel re-renders
+every 30s during a live meeting, and `baseline()` walks every archived meeting.
+
 ### Injected scripts must be safe to run twice
 
 `hook.js` and `bridge.js` are each injected by two paths that cannot fully see

@@ -27,6 +27,13 @@ the 2026-08-03 打ち合わせ (transcript summarised in the notes below).
 
 ## Known gaps in shipped code
 
+- [x] ~~**Half-shipped features.**~~ Fixed 2026-08. The own-history baseline and
+      the replay scrubber were rendered only by the dashboard, so the side panel
+      — where a seller actually sits during a call — never showed them, and
+      `docs/index.html` described neither. Both surfaces now render both, the
+      docs cover them, and `check-coaching.js` asserts the parity so a future
+      feature cannot quietly land on one surface only.
+
 - [x] ~~**`bridge.js` crashed on re-injection.**~~ Fixed 2026-08. Top-level
       `const CHANNEL` threw `Identifier 'CHANNEL' has already been declared`
       when a frame received the file from both the declarative and imperative

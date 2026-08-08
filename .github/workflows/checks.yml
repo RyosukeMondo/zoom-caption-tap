@@ -1,0 +1,53 @@
+# Runs the check suites on every push and pull request.
+#
+# Until this existed, nothing ran between releases: the suites were only invoked
+# by hand, and release.yml did not run them at all. So a broken commit sat on
+# main looking healthy until someone happened to run them locally — or until it
+# was already inside a published ZIP.
+#
+# This does not replace loading the extension in a browser. Every bug that has
+# actually reached a user here (Duplicate script ID, [object Object],
+# CHANNEL already declared) passed static checks first. It narrows the gap; it
+# does not close it.
+
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax
+        run: |
+          set -euo pipefail
+          for f in poc/*.js tools/*.js; do node --check "$f"; done
+
+      - name: Injected scripts survive re-injection
+        run: node tools/check-injection.js
+
+      - name: Coaching analysis, renderers and feature availability
+        run: node tools/check-coaching.js
+
+      - name: Manifest is valid JSON and carries a version
+        run: |
+          set -euo pipefail
+          node -e '
+            const m = require("./poc/manifest.json");
+            if (!m.version) { console.error("manifest.json has no version"); process.exit(1); }
+            if (!/^\d+\.\d+\.\d+$/.test(m.version)) {
+              console.error(`manifest version "${m.version}" is not x.y.z`);
+              process.exit(1);
+            }
+            console.log("manifest version", m.version);
+          '

@@ -157,6 +157,17 @@
   #coach-coverage li.covered { color: var(--ok); border-color: var(--ok); }
   #coach-coverage li.missing { color: var(--warn); border-color: var(--warn); }
 
+  #coach-replay { margin: 0 0 6px; }
+  #coach-replay-row { display: flex; align-items: center; gap: 6px; }
+  #coach-replay-row input[type="range"] { flex: 1; margin: 0; min-width: 0; }
+  #coach-replay-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--muted);
+    min-width: 3.4em;
+    text-align: right;
+  }
+
   #coach-nudges, #coach-nudges-more-list { margin: 0; padding-left: 1.1em; }
   #coach-nudges li, #coach-nudges-more-list li { margin-bottom: 3px; font-size: 12px; }
   #coach-nudges li.ok, #coach-nudges-more-list li.ok { color: var(--ok); }
@@ -278,6 +289,17 @@
       <span id="coach-ratio-pct">—</span>
     </div>
     <ul id="coach-coverage" aria-label="ヒアリング項目"></ul>
+
+    <!-- Review only: scrub an archived meeting and see what was flagged when.
+         Hidden during a live call, where "now" is the only meaningful moment. -->
+    <div id="coach-replay" hidden>
+      <div id="coach-replay-row">
+        <input id="coach-replay-slider" type="range" min="0" max="0" step="1000" value="0"
+               aria-label="会議の経過時間" />
+        <span id="coach-replay-time">00:00</span>
+      </div>
+    </div>
+
     <ul id="coach-nudges"></ul>
     <details id="coach-nudges-more" hidden>
       <summary id="coach-nudges-more-summary"></summary>

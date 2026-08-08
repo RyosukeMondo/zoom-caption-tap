@@ -43,6 +43,13 @@ jobs:
           # A syntax error here ships an extension that fails to load with a
           # message most users cannot act on. Cheap to catch at build time.
           for f in poc/*.js; do node --check "$f"; done
+
+          # The actual test suites. These used to be absent, which meant a
+          # release could be built and published with every one of them failing
+          # — including the check that catches the bridge.js re-injection crash
+          # that shipped in v0.2.0. `node --check` only proves a file parses.
+          node tools/check-injection.js
+          node tools/check-coaching.js
           # The tag should match the version users will see in chrome://extensions.
           MANIFEST_VERSION="$(node -p "require('./poc/manifest.json').version")"
           TAG="${{ inputs.tag || github.ref_name }}"

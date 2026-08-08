@@ -683,10 +683,50 @@ function liveMeetingId() {
 let coachSeller = null; // currently selected seller name, or null if unset
 let coachSellerFor; // meeting id coachSeller was loaded for (undefined = never loaded)
 
+// The seller's own history, and the (meeting, seller) it was computed for.
+//
+// Cached because renderCoach() runs on every 30s tick during a live meeting and
+// baseline() reads *every* archived meeting to build its medians. Recomputing
+// that each tick would re-read the whole archive for an answer that cannot have
+// changed — past meetings do not move while this one is running.
+let coachBaseline = null;
+let coachBaselineKey = null;
+
+async function loadCoachBaseline(id, seller) {
+  const key = `${id ?? ""}::${seller ?? ""}`;
+  if (key === coachBaselineKey) return;
+  coachBaselineKey = key;
+  coachBaseline = null;
+
+  if (!seller) return;
+  try {
+    const summaries = await MeetingArchive.list();
+    const records = [];
+    for (const s of summaries) {
+      const full = await MeetingArchive.load(s.id);
+      if (full) records.push(full);
+    }
+    // Late-arriving reads must not overwrite a newer selection: the user can
+    // change seller, or the meeting can end, while this loop is awaiting.
+    if (coachBaselineKey !== key) return;
+    coachBaseline = MeetingCoach.baseline(records, seller, { excludeId: id });
+  } catch (e) {
+    // Non-fatal: the baseline is context for the other numbers, not a
+    // prerequisite for them. Losing it must not take the panel down.
+    console.warn("[coach] baseline unavailable", e);
+    if (coachBaselineKey === key) coachBaseline = null;
+    return;
+  }
+  if (coachBaseline?.enough) renderCoach();
+}
+
 async function loadCoachSeller(id) {
   coachSeller = await MeetingCoach.getSeller(id);
   coachSellerFor = id;
   renderCoach();
+  // After the first paint: the panel must not wait on N storage reads to show
+  // the numbers it already has.
+  loadCoachBaseline(id, coachSeller);
 }
 
 function coachSpeakerNames() {
@@ -735,6 +775,63 @@ function renderCoachCoverage(coverage) {
       return li;
     }),
   );
+}
+
+// Replay of the meeting being reviewed, and the (meeting, seller) it belongs
+// to. Keyed for the same reason as the baseline, plus one of its own: rebuilding
+// on every renderCoach() would reset the slider to the end mid-drag and fight
+// the user for control of it.
+let coachReplay = null;
+let coachReplayKey = null;
+
+function coachMmss(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Builds (or reuses) the replay for a reviewed meeting and sizes the slider. */
+function prepareCoachReplay(meeting, seller) {
+  const wrap = $("coach-replay");
+  const key = `${meeting?.id ?? ""}::${seller ?? ""}`;
+
+  if (key !== coachReplayKey) {
+    coachReplayKey = key;
+    coachReplay = meeting && seller ? MeetingCoach.replay(meeting, seller) : null;
+
+    if (coachReplay && coachReplay.durationMs >= 1000) {
+      const slider = $("coach-replay-slider");
+      slider.min = "0";
+      slider.max = String(coachReplay.durationMs);
+      slider.step = String(coachReplay.stepMs);
+      slider.value = String(coachReplay.durationMs); // open on the end state
+      $("coach-replay-time").textContent = coachMmss(coachReplay.durationMs);
+    }
+  }
+
+  // A meeting with no duration has nothing to scrub through.
+  wrap.hidden = !(coachReplay && coachReplay.durationMs >= 1000);
+  return !wrap.hidden;
+}
+
+/** Redraws coverage and nudges as they stood at one moment. */
+function renderCoachReplayAt(elapsedMs) {
+  if (!coachReplay) return;
+  const frame = MeetingCoach.frameAt(coachReplay, elapsedMs);
+  if (!frame) return;
+
+  $("coach-replay-time").textContent = coachMmss(elapsedMs);
+
+  const pct = frame.talkRatio != null ? Math.round(frame.talkRatio * 100) : null;
+  const fill = $("coach-ratio-fill");
+  fill.style.width = `${pct ?? 0}%`;
+  const talkNudge = frame.nudges.find((n) => n.metric === "talkRatio") || null;
+  fill.className = talkNudge ? talkNudge.level : "";
+  $("coach-ratio-pct").textContent = pct != null ? `${pct}%` : "—";
+
+  renderCoachCoverage(frame.coverage);
+  // Live-only nudges: the post-hoc ones are true of the whole meeting and would
+  // sit there unchanged at every position, making the slider look broken.
+  renderCoachNudges(frame.nudges.filter((n) => MeetingCoach.LIVE_METRICS.has(n.metric)));
 }
 
 function renderCoachNudges(items) {
@@ -789,12 +886,13 @@ function renderCoach() {
   let report, items;
   if (reviewMeeting) {
     report = MeetingCoach.analyze({ transcript: reviewMeeting.transcript }, coachSeller);
-    items = MeetingCoach.nudges(report);
+    items = MeetingCoach.nudges(report, { baseline: coachBaseline });
   } else {
     ({ report, nudges: items } = MeetingCoach.analyzeLive(
       { transcript: rawTranscript },
       coachSeller,
       Date.now(),
+      { baseline: coachBaseline },
     ));
   }
 
@@ -807,9 +905,23 @@ function renderCoach() {
     $("coach-ratio-fill").style.width = "0%";
     $("coach-ratio-fill").className = "";
     $("coach-ratio-pct").textContent = "—";
+    $("coach-replay").hidden = true;
     renderCoachCoverage(null);
     renderCoachNudges([]);
     return;
+  }
+
+  // Reviewing an archived meeting: offer the scrubber. During a live call there
+  // is nothing to scrub — "now" is the only moment that exists, and the panel is
+  // already showing it.
+  if (reviewMeeting) {
+    if (prepareCoachReplay(reviewMeeting, coachSeller)) {
+      renderCoachReplayAt(Number($("coach-replay-slider").value));
+      return; // the replay owns the ratio bar, coverage and nudges from here
+    }
+  } else {
+    $("coach-replay").hidden = true;
+    coachReplayKey = null; // force a rebuild next time a meeting is reviewed
   }
 
   const pct = report.talkRatio != null ? Math.round(report.talkRatio * 100) : null;
@@ -830,6 +942,14 @@ $("coach-seller").addEventListener("change", async (e) => {
   coachSellerFor = id;
   if (id) await MeetingCoach.setSeller(id, coachSeller);
   renderCoach();
+  // The baseline is per-seller, so switching who "you" are invalidates it.
+  loadCoachBaseline(id, coachSeller);
+});
+
+// "input" rather than "change" so the panel tracks the thumb while dragging;
+// renderCoachReplayAt only reads a precomputed frame, so this stays cheap.
+$("coach-replay-slider").addEventListener("input", (e) => {
+  renderCoachReplayAt(Number(e.target.value));
 });
 
 /** Shared row renderer for the timeline and the recall panel: elapsed time
