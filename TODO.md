@@ -7,17 +7,23 @@ the 2026-08-03 打ち合わせ (transcript summarised in the notes below).
 
 ## Blocking — do before the next client install
 
-- [ ] **Load it in a browser and click through.** Nothing in `v0.2.0` or the
-      four commits after it has been exercised in a live meeting. The two bugs
-      that actually reached a client (`Duplicate script ID`, `[object Object]`)
-      both passed every static check first.
+- [ ] **Load it in a browser and click through.** Still the top item, and
+      `v0.3.0` shipped without it — a deliberate call, because the `v0.2.0` ZIP
+      it replaced contained the `CHANNEL` re-injection crash, so an unconfirmed
+      fix beat a known-broken download. That trade does not carry over to the
+      next release. The three bugs that actually reached a browser
+      (`Duplicate script ID`, `[object Object]`, `CHANNEL already declared`)
+      all passed every static check first.
+      Unexercised in a live meeting: the discovery/coverage analysis, the
+      replay slider, and the re-injection fix itself.
 - [ ] **Test on a machine without Gemini Nano downloaded.** The
       `availability() === "downloadable"` branch — the one a fresh client hits
       — has never run anywhere. It is the exact path that crashed at the client
       on 2026-08-03.
-- [ ] **Cut `v0.2.1`.** `origin/main` and the released ZIP are behind: samples,
-      the `[object Object]` fix, and 商談フィードバック are all unreleased, so
-      the public download button serves none of them.
+- [x] ~~**Cut `v0.2.1`.**~~ Shipped as **`v0.3.0`** (2026-08-08) instead: the
+      eight commits that had piled up behind `v0.2.0` included two features
+      (discovery/coverage analysis with an own-history baseline, and the
+      time-series replay), which is a minor bump rather than a patch.
 
 ## Known gaps in shipped code
 
