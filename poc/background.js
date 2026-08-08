@@ -146,10 +146,24 @@ chrome.permissions.onRemoved.addListener(syncRegistration);
 //      "有効にする" clicks moments apart, before either has produced a
 //      bridge-ready ping).
 //
-// Together: hook.js/bridge.js are files this code does not own and cannot
-// edit to add their own guard, so the guard lives entirely on the injector
-// side instead — every call path funnels through activateTab(), and no file
-// is ever pushed into a frame that isn't freshly claimed by its own probe.
+// Neither layer is sufficient on its own, and this comment used to claim they
+// were — that hook.js/bridge.js "cannot be edited to add their own guard, so
+// the guard lives entirely on the injector side". That was wrong twice over:
+// both files are ours, and the injector cannot see the *declarative* path at
+// all. registerContentScripts() injects the same two files on page load without
+// setting either window[flag], and onUpdated("loading") clears bridgeReadyAt on
+// every navigation — so right after a Zoom page loads there is a real window in
+// which both layers believe a frame is unclaimed while the declarative copy is
+// already running in it.
+//
+// bridge.js hit exactly that and threw `Identifier 'CHANNEL' has already been
+// declared`, a parse error no injector-side guard could have prevented. Both
+// files are therefore self-idempotent now (IIFE plus their own sentinels:
+// hook.js's WRAPPED/OBSERVED, bridge.js's LISTENING) and are safe to run twice
+// in a frame regardless of who injected them. The two layers below remain
+// worthwhile — they avoid pointless re-injection and let activateTab() report
+// what it actually did — but correctness no longer depends on them being
+// exhaustive.
 
 const MAIN_FLAG = "__zoomTapMainInjected";
 const ISOLATED_FLAG = "__zoomTapIsolatedInjected";

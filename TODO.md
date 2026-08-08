@@ -21,6 +21,13 @@ the 2026-08-03 打ち合わせ (transcript summarised in the notes below).
 
 ## Known gaps in shipped code
 
+- [x] ~~**`bridge.js` crashed on re-injection.**~~ Fixed 2026-08. Top-level
+      `const CHANNEL` threw `Identifier 'CHANNEL' has already been declared`
+      when a frame received the file from both the declarative and imperative
+      injection paths. A parse error, so no runtime guard could catch it; both
+      injected files are now IIFE-wrapped with their own sentinels and
+      `tools/check-injection.js` asserts it.
+
 - [ ] **Substantive caption corrections leave a stale fact in the note.**
       `mergeInto()` dedupes by containment, so a reworded correction collapses
       correctly — but a real correction (`1000万円` → `100万円`) is neither

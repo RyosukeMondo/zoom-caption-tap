@@ -111,6 +111,7 @@ Useful commands:
 ```bash
 node --check poc/<file>.js                     # syntax
 node tools/check-coaching.js                   # coaching.js + both renderers
+node tools/check-injection.js                  # hook/bridge survive re-injection
 # unit-test storage logic against a stubbed chrome.storage — see git log for
 # examples of driving archive.js + samples.js under node
 ```
@@ -121,6 +122,30 @@ them. The long one is ~22 minutes laid out so each nudge fires at a different
 point, ends 4/6 on coverage with 決裁 and 時期 never raised, and leaves one
 objection talked over and one handled. Its shape is asserted in the checks —
 if a regex change makes 決裁 tick, the demo silently stops showing a gap.
+
+### Injected scripts must be safe to run twice
+
+`hook.js` and `bridge.js` are each injected by two paths that cannot fully see
+each other: `registerContentScripts()` on page load, and `executeScript()` from
+`background.js` for tabs already open when permission was granted. The
+declarative path sets no `window[flag]` sentinel and `bridgeReadyAt` is cleared
+on every navigation, so a frame really can receive the same file twice.
+
+`bridge.js` declared `const CHANNEL` at top level and threw
+`Identifier 'CHANNEL' has already been declared` on a live call. That is a
+**parse** error — the script dies before any statement runs, so neither a
+runtime guard inside the file nor a sentinel on the injector side can stop it.
+`background.js` used to assert the opposite ("files this code does not own and
+cannot edit"); both files are ours, and that comment is now corrected.
+
+So: **any file that gets injected has its whole body in an IIFE, with its own
+per-frame sentinel** (`hook.js`'s `WRAPPED`/`OBSERVED`, `bridge.js`'s
+`LISTENING`). Guard the side effect, not the ping — `bridge.js` skips
+re-registering its listener but still sends `bridge-ready` every time, because
+`activateTab()` blocks on that ping and a silent re-run makes a live frame look
+like a timeout. `node tools/check-injection.js` evaluates each file twice in one
+context and rejects top-level `const`/`let`/`class`, which is the check that
+would have caught this before it shipped.
 
 `tools/check-coaching.js` covers the three things hand-tracing keeps missing:
 the realtime branches (every live nudge sits behind a 90s/5min/15min threshold,
