@@ -227,6 +227,61 @@ console.log("\n[edge cases]");
 }
 
 // ---------------------------------------------------------------------------
+// Replay. The claim being checked is that reconstructing from a transcript
+// prefix reproduces what the live panel showed — if that breaks, the review
+// timeline quietly starts lying about the meeting.
+// ---------------------------------------------------------------------------
+console.log("\n[replay]");
+{
+  const t = [line(0, SELLER, "現在はどのように運用されていますか。"), line(1, CUST, "手作業です。")];
+  for (let s = 120; s <= 400; s += 6) t.push({ at: T0 + s * 1000, speaker: SELLER, text: "ご説明します。" });
+  t.push(line(9, CUST, "少し高いと感じます。"));
+  t.push(line(12, SELLER, "ご予算はどれくらいでしょうか。"));
+
+  const rp = C.replay({ id: "x", transcript: t }, SELLER);
+  check("returns a replay", Boolean(rp));
+  check("frames span the meeting", rp.frames[0].elapsedMs === 0 && rp.frames[rp.frames.length - 1].at === rp.endAt);
+  check("frames are ordered", rp.frames.every((f, i) => i === 0 || f.elapsedMs >= rp.frames[i - 1].elapsedMs));
+  check("line counts never decrease", rp.frames.every((f, i) => i === 0 || f.lineCount >= rp.frames[i - 1].lineCount));
+  check("last frame holds every line", rp.frames[rp.frames.length - 1].lineCount === t.length);
+
+  // The invariant the whole feature rests on.
+  const last = rp.frames[rp.frames.length - 1];
+  const liveAtEnd = C.analyzeLive({ transcript: t }, SELLER, rp.endAt);
+  check(
+    "final frame matches analyzeLive at the same instant",
+    JSON.stringify(last.nudges) === JSON.stringify(liveAtEnd.nudges),
+  );
+
+  check("events are time-ordered", rp.events.every((e, i) => i === 0 || e.firstAt >= rp.events[i - 1].firstAt));
+  check("live events are flagged", rp.events.filter((e) => e.live).every((e) => C.LIVE_METRICS.has(e.metric)));
+  check("post-hoc events are not flagged live", rp.events.filter((e) => !e.live).every((e) => !C.LIVE_METRICS.has(e.metric)));
+  check("a monologue event was captured", Boolean(rp.events.find((e) => e.metric === "monologueNow")));
+
+  const budget = rp.coverageEvents.find((c) => c.key === "budget");
+  check("coverage event records when a topic landed", budget.covered && budget.elapsedMs > 0);
+  check("coverage elapsed comes from the utterance, not the frame", budget.at % 1000 === 0 && budget.elapsedMs === budget.at - rp.startAt);
+  check("uncovered topics stay null", rp.coverageEvents.find((c) => c.key === "authority").elapsedMs === null);
+
+  // frameAt boundaries.
+  check("frameAt(0) is the first frame", C.frameAt(rp, 0) === rp.frames[0]);
+  check("frameAt(-1) clamps low", C.frameAt(rp, -1) === rp.frames[0]);
+  check("frameAt(huge) clamps high", C.frameAt(rp, 1e12) === rp.frames[rp.frames.length - 1]);
+  check("frameAt picks the frame in effect", C.frameAt(rp, rp.frames[3].elapsedMs + 1) === rp.frames[3]);
+  check("frameAt(null replay) is null", C.frameAt(null, 0) === null);
+
+  check("empty transcript -> null", C.replay({ transcript: [] }, SELLER) === null);
+  check("seller who never spoke -> null", C.replay({ transcript: [line(0, CUST, "はい。")] }, SELLER) === null);
+  check("no seller -> null", C.replay({ transcript: t }, null) === null);
+
+  // The frame cap has to widen the step rather than build unbounded work.
+  const long = [line(0, SELLER, "はじめます。"), line(60 * 8, CUST, "終わりです。")];
+  const capped = C.replay({ transcript: long }, SELLER, { stepMs: 1000 });
+  check("frame count stays capped on a long meeting", capped.frames.length <= 601, String(capped.frames.length));
+  check("step widened to respect the cap", capped.stepMs > 1000, String(capped.stepMs));
+}
+
+// ---------------------------------------------------------------------------
 // Element-id contract: every $("id") / el("#id") must have markup.
 // ---------------------------------------------------------------------------
 console.log("\n[element-id contract]");
@@ -330,5 +385,145 @@ console.log("\n[renderers]");
   }
 }
 
-console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}  ${pass} passed, ${fail} failed`);
-process.exit(fail === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+// The replay renderers, driven through a scrub. These reach across several
+// elements at once, so the stub hands out one node per id.
+// ---------------------------------------------------------------------------
+console.log("\n[replay renderers]");
+{
+  const makeEl = (tag) => ({
+    tagName: tag,
+    className: "",
+    _text: "",
+    title: "",
+    hidden: false,
+    min: "",
+    max: "",
+    step: "",
+    value: "",
+    children: [],
+    style: {},
+    get textContent() { return this._text; },
+    set textContent(v) { this._text = String(v); },
+    appendChild(c) { this.children.push(c); return c; },
+    replaceChildren(...cs) { this.children = cs; },
+  });
+
+  const src = fs.readFileSync(path.join(POC, "dashboard.js"), "utf8");
+  const a = src.indexOf("let currentReplay = null;");
+  const b = src.indexOf("function renderCoachingNudges");
+  if (a === -1 || b === -1 || b < a) {
+    check("replay renderers found in dashboard.js", false);
+  } else {
+    const nodes = {};
+    const ctx = {
+      el: (sel) => (nodes[sel] ||= makeEl("div")),
+      clearChildren: (n) => { n.children = []; },
+      document: { createElement: makeEl, createTextNode: (t) => ({ textContent: String(t), children: [] }) },
+      MeetingCoach: C,
+      console,
+    };
+    vm.createContext(ctx);
+    vm.runInContext(src.slice(a, b), ctx);
+
+    const t = [line(0, SELLER, "現在はどのように運用されていますか。"), line(1, CUST, "手作業です。")];
+    for (let s = 120; s <= 400; s += 6) t.push({ at: T0 + s * 1000, speaker: SELLER, text: "ご説明します。" });
+    t.push(line(9, CUST, "少し高いと感じます。"));
+    t.push(line(12, SELLER, "ご予算はどれくらいでしょうか。"));
+    ctx.REC = { id: "r1", transcript: t };
+    ctx.SELLER_NAME = SELLER;
+
+    vm.runInContext("renderCoachingReplay(REC, SELLER_NAME);", ctx);
+    check("panel is shown for a scrubbable meeting", nodes["#coaching-replay"].hidden === false);
+    check("slider spans the meeting", Number(nodes["#replay-slider"].max) > 0);
+    check("markers were placed", nodes["#replay-markers"].children.length > 0);
+    check("event list is populated", nodes["#replay-events"].children.length > 0);
+    check("coverage chips rendered", nodes["#replay-coverage"].children.length === C.COVERAGE.length);
+
+    const clean = (n) =>
+      !(typeof n.textContent === "string" && (n.textContent.includes("[object") || n.textContent === "undefined")) &&
+      (n.children || []).every(clean);
+    check("event rows are clean strings", clean(nodes["#replay-events"]));
+
+    // Scrub to the start: the state must actually change, or the slider is
+    // decorative.
+    const endTime = nodes["#replay-time"].textContent;
+    const endCovered = nodes["#replay-coverage"].children.filter((c) => c.className === "covered").length;
+    vm.runInContext("renderReplayAt(0);", ctx);
+    check("scrubbing moves the clock", nodes["#replay-time"].textContent !== endTime, `${endTime} vs ${nodes["#replay-time"].textContent}`);
+    check("clock starts at 00:00", nodes["#replay-time"].textContent === "00:00");
+    const startCovered = nodes["#replay-coverage"].children.filter((c) => c.className === "covered").length;
+    check("coverage grows over the call", startCovered < endCovered, `${startCovered} → ${endCovered}`);
+    check("state line is populated", nodes["#replay-state"].children.length === 3);
+
+    // A meeting with no duration has nothing to scrub.
+    ctx.REC2 = { id: "r2", transcript: [line(0, SELLER, "はい。")] };
+    vm.runInContext("renderCoachingReplay(REC2, SELLER_NAME);", ctx);
+    check("zero-length meeting hides the panel", nodes["#coaching-replay"].hidden === true);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The bundled sample exists to demonstrate this feature, so its shape is part
+// of the contract: if a regex change makes 決裁 tick, the demo stops showing a
+// gap and nobody notices from the code alone.
+// ---------------------------------------------------------------------------
+console.log("\n[seed-sales-call-long fixture]");
+{
+  const store = {};
+  const sb = {
+    console,
+    chrome: { storage: { local: {
+      async get(k) { if (k == null) return { ...store }; const ks = Array.isArray(k) ? k : [k]; const o = {}; for (const x of ks) if (x in store) o[x] = store[x]; return o; },
+      async set(o) { Object.assign(store, o); },
+    } } },
+  };
+  sb.self = sb;
+  sb.globalThis = sb;
+  vm.createContext(sb);
+  for (const f of ["archive.js", "coaching.js", "samples.js"]) {
+    vm.runInContext(fs.readFileSync(path.join(POC, f), "utf8"), sb, { filename: f });
+  }
+
+  const done = (async () => {
+    await sb.MeetingSamples.seed();
+    const rec = await sb.MeetingArchive.load("seed-sales-call-long");
+    check("sample is seeded", Boolean(rec));
+    if (!rec) return;
+
+    const seller = await sb.MeetingCoach.getSeller("seed-sales-call-long");
+    check("seller is preselected", seller === "営業・佐々木");
+
+    const rp = sb.MeetingCoach.replay(rec, seller);
+    // Must exceed COVERAGE_REMINDER_MS or the sample demonstrates nothing.
+    check("runs past the coverage reminder", rp.durationMs > sb.MeetingCoach.COVERAGE_REMINDER_MS, `${Math.round(rp.durationMs / 60000)}min`);
+
+    const live = new Set(rp.events.filter((e) => e.live).map((e) => e.metric));
+    for (const m of ["monologueNow", "customerSilent", "openQuestionDrought", "coverageNow", "objectionNow"]) {
+      check(`fires ${m}`, live.has(m));
+    }
+    // Distinct start times are the point — a slider where everything fires at
+    // once demonstrates nothing.
+    const starts = new Set(rp.events.filter((e) => e.live).map((e) => e.elapsedMs));
+    check("live events start at distinct times", starts.size >= 4, `${starts.size} distinct`);
+
+    const rep = sb.MeetingCoach.analyze(rec, seller);
+    check("ends with 決裁 uncovered", !rep.coverage.find((c) => c.key === "authority").covered);
+    check("ends with 時期 uncovered", !rep.coverage.find((c) => c.key === "timing").covered);
+    check("予算 does get covered", rep.coverage.find((c) => c.key === "budget").covered);
+    check("one objection left unresolved", rep.unresolvedObjections.length === 1, JSON.stringify(rep.objections.map((o) => o.addressed)));
+    check("the other objection is addressed", rep.objections.length === 2 && rep.objections.some((o) => o.addressed));
+  })();
+
+  // Seeding is async, so the summary has to wait for it. Everything above this
+  // point is synchronous; this is the only await in the script.
+  done
+    .then(() => {
+      console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}  ${pass} passed, ${fail} failed`);
+      process.exit(fail === 0 ? 0 : 1);
+    })
+    .catch((e) => {
+      console.error("\nCHECK CRASHED:", e);
+      process.exit(1);
+    });
+}

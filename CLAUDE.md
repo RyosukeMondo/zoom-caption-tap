@@ -42,6 +42,27 @@ The seller's own baseline (`baseline()`) refuses to return anything below
 `MIN_BASELINE_MEETINGS` (3) for the same reason: "your average" computed from
 one previous call is an invented metric wearing a number.
 
+### Replay is reconstructed, never recorded
+
+`replay()` rebuilds what the live panel would have shown at each point in a
+meeting, and the review slider scrubs through it. Nothing is logged during a
+call to make this work: `analyzeLive()` is a pure function of (transcript
+prefix, clock), so feeding it prefixes reproduces the call — which is also why
+it works on meetings archived long before the feature existed. `tools/
+check-coaching.js` asserts the invariant that makes this legitimate (the final
+frame equals `analyzeLive()` at the same instant); if that ever fails, the
+review timeline has started lying about the meeting.
+
+The honest caveat, which the UI states next to the control: captions settle
+after `SETTLE_MS` and can be corrected afterwards, so the archived transcript
+may hold text that was different, or not yet present, at that moment. Call it
+再現, never a record of what was displayed — a user who believes it is a
+recording will read a caption correction as the tool contradicting itself.
+
+Post-hoc observations are true of the whole meeting and would sit on the track
+end to end, so only `LIVE_METRICS` get timeline markers and appear in
+「この会議で出た指摘」.
+
 ## No model in the coaching path
 
 `coaching.js` is deterministic JavaScript. Gemini Nano is deliberately not
@@ -93,6 +114,13 @@ node tools/check-coaching.js                   # coaching.js + both renderers
 # unit-test storage logic against a stubbed chrome.storage — see git log for
 # examples of driving archive.js + samples.js under node
 ```
+
+`seed-sales-call-long` exists specifically to exercise this: `seed-sales-call`
+is four minutes, under every realtime threshold, so it demonstrates none of
+them. The long one is ~22 minutes laid out so each nudge fires at a different
+point, ends 4/6 on coverage with 決裁 and 時期 never raised, and leaves one
+objection talked over and one handled. Its shape is asserted in the checks —
+if a regex change makes 決裁 tick, the demo silently stops showing a gap.
 
 `tools/check-coaching.js` covers the three things hand-tracing keeps missing:
 the realtime branches (every live nudge sits behind a 90s/5min/15min threshold,

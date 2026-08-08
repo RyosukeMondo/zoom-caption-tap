@@ -411,6 +411,156 @@
     },
   });
 
+  // ---------------------------------------------------------------------
+  // A long 商談, built so the replay track has something to show.
+  //
+  // seed-sales-call is four minutes, which is under every realtime threshold
+  // (90s monologue / 3min customer silence / 5min open-question drought /
+  // 15min coverage reminder), so it demonstrates none of them. This one is
+  // ~30 minutes and is laid out so each fires at a *different* point:
+  //
+  //   ~0-6min   discovery — 現状 / 課題 / 影響 get covered, open questions
+  //   ~6-17min  a long pitch — monologue, customer silence, and then the
+  //             open-question drought, all stacking up during it
+  //   ~15min+   the coverage reminder, with 決裁 and 時期 still missing
+  //   ~17min    「少し高い」 — talked over, never asked back: stays unresolved
+  //   ~24min    「他社と比較」 — asked back within the window: resolves
+  //   ~26min    予算 finally covered
+  //
+  // 決裁 and 時期 are deliberately never raised, so the checklist ends 4/6 and
+  // the gap is the point of the sample rather than an oversight in writing it.
+  const r6 = rng(6006);
+  const m6Start = now - day + 10 * 60 * 60000;
+
+  const m6Discovery = lay(
+    [
+      ["営業・佐々木", "本日はお時間をいただきありがとうございます。"],
+      ["顧客・山本", "よろしくお願いします。"],
+      ["営業・佐々木", "早速ですが、現在はどのように問い合わせ対応を運用されていますか。"],
+      ["顧客・山本", "今は電話とメールを、五名ほどで回しています。"],
+      ["営業・佐々木", "その中で一番お困りのところは、どのあたりでしょうか。"],
+      ["顧客・山本", "問い合わせが集中する時間帯に、どうしてもお待たせしてしまいます。"],
+      ["顧客・山本", "折り返しになることも多くて、そこが心苦しいところです。"],
+      ["営業・佐々木", "お待たせしてしまうことで、どのような影響が出ていますか。"],
+      ["顧客・山本", "解約の理由に挙げられたこともありますし、残業も増えています。"],
+      ["営業・佐々木", "残業はどれくらい増えている感覚でしょうか。"],
+      ["顧客・山本", "繁忙期だと、一人あたり月二十時間ほどでしょうか。"],
+      ["営業・佐々木", "なるほど。人を増やすという話にはならないのでしょうか。"],
+      ["顧客・山本", "募集はしているのですが、なかなか採用が進まないんです。"],
+      ["顧客・山本", "採用できても、独り立ちまでに時間がかかりますし。"],
+      ["営業・佐々木", "独り立ちまでは、どのくらいを見込まれていますか。"],
+      ["顧客・山本", "三ヶ月は見ています。その間は先輩がつきっきりです。"],
+    ],
+    m6Start,
+    r6,
+  );
+
+  // The pitch. Seller-only, with gaps under RUN_GAP_MS so the whole block reads
+  // as one continuous run — long enough to trip the monologue warning, then the
+  // customer-silence one, then the open-question drought, in that order.
+  const m6Pitch = lay(
+    expand(
+      [
+        ["営業・佐々木", "でしたら、弊社のサービスがお役に立てるかと思います。"],
+        ["営業・佐々木", "会話の内容をその場で解析して、関連する社内文書を自動で出す仕組みです。"],
+        ["営業・佐々木", "オペレーターが検索する手間そのものをなくす、という考え方になります。"],
+        ["営業・佐々木", "表記の揺れも吸収しますので、言い回しが違っても拾えます。"],
+        ["営業・佐々木", "権限に応じて、出す文書を出し分けることもできます。"],
+        ["営業・佐々木", "導入いただいた他のセンター様では、一件あたりの対応が短くなっています。"],
+      ],
+      22,
+    ),
+    m6Discovery[m6Discovery.length - 1].at + 4000,
+    r6,
+    { sameMs: [6000, 9000] },
+  );
+
+  // The objection that gets talked over. The seller answers, but never with a
+  // question, which is exactly what "unresolved" is meant to catch.
+  // Long enough that the seller's next question falls outside
+  // OBJECTION_WINDOW_MS — which is the whole point: the concern is answered
+  // with assertions and never asked back about, so it stays unresolved.
+  const m6Objection = lay(
+    [
+      ["顧客・山本", "正直なところ、少し高いと感じますね。"],
+      ...expand(
+        [
+          ["営業・佐々木", "そう感じられる方は、はじめは多くいらっしゃいます。"],
+          ["営業・佐々木", "ただ、対応が短くなれば残業のほうが先に減っていきます。"],
+          ["営業・佐々木", "他社様と比べても、機能あたりでは割安なほうだと考えています。"],
+          ["営業・佐々木", "サポートも標準で含まれていますので、追加の持ち出しはありません。"],
+          ["営業・佐々木", "運用が乗るまでは、こちらで伴走もいたします。"],
+          ["営業・佐々木", "設定も、はじめの作り込みまでこちらでお引き受けします。"],
+        ],
+        3,
+      ),
+      ["顧客・山本", "なるほど……。"],
+    ],
+    m6Pitch[m6Pitch.length - 1].at + 5000,
+    r6,
+    { sameMs: [7000, 9500] },
+  );
+
+  // The second objection, handled the way the first should have been.
+  const m6Recover = lay(
+    [
+      ["顧客・山本", "実は他社さんとも比較していまして。"],
+      ["営業・佐々木", "差し支えなければ、どのあたりを比べていらっしゃいますか。"],
+      ["顧客・山本", "検索の精度と、あとは運用の手間ですね。"],
+      ["営業・佐々木", "その二つは、どちらをより重く見ていらっしゃいますか。"],
+      ["顧客・山本", "手間のほうです。入れたのに使われない、が一番怖いので。"],
+      ["営業・佐々木", "承知しました。そこは実際の問い合わせで試していただくのが早いと思います。"],
+      ["顧客・山本", "それは助かります。"],
+    ],
+    m6Objection[m6Objection.length - 1].at + 6000,
+    r6,
+  );
+
+  const m6Close = lay(
+    [
+      ["営業・佐々木", "ご予算は、どれくらいをお考えでしょうか。"],
+      ["顧客・山本", "年間で二百万円くらいまでなら、という感覚です。"],
+      ["営業・佐々木", "ありがとうございます。その範囲で組める構成をお出しします。"],
+      ["顧客・山本", "お願いします。"],
+      ["営業・佐々木", "では、お見積りと提案書を作成して、次回お持ちします。"],
+      ["顧客・山本", "はい、よろしくお願いします。"],
+    ],
+    m6Recover[m6Recover.length - 1].at + 5000,
+    r6,
+  );
+
+  const m6 = [...m6Discovery, ...m6Pitch, ...m6Objection, ...m6Recover, ...m6Close];
+
+  seeds.push({
+    id: "seed-sales-call-long",
+    title: "商談（長め・振り返り用）",
+    seller: "営業・佐々木",
+    transcript: m6,
+    note: {
+      topics: [
+        { text: "問い合わせ集中時の待ち時間", count: 5, firstSeen: now, lastSeen: now },
+        { text: "採用と教育にかかる期間", count: 3, firstSeen: now, lastSeen: now },
+        { text: "他社サービスとの比較軸", count: 3, firstSeen: now, lastSeen: now },
+      ],
+      decisions: [
+        { text: "実際の問い合わせで試用してもらう", count: 2, firstSeen: now, lastSeen: now },
+        { text: "年間二百万円の範囲で構成を組む", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      actions: [
+        { text: "佐々木が見積りと提案書を作成する", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      questions: [
+        { text: "比較軸は検索精度と運用の手間のどちらが重いか", count: 2, firstSeen: now, lastSeen: now },
+        { text: "残業はどれくらい増えているか", count: 2, firstSeen: now, lastSeen: now },
+      ],
+      keywords: [
+        { text: "待ち時間", count: 4, firstSeen: now, lastSeen: now },
+        { text: "残業", count: 3, firstSeen: now, lastSeen: now },
+        { text: "他社比較", count: 3, firstSeen: now, lastSeen: now },
+      ],
+    },
+  });
+
   const results = [];
   for (const s of seeds) {
     const meeting = MeetingArchive.build(s);

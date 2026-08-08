@@ -301,6 +301,56 @@
   .coaching-coverage .missing .mark { color: var(--warn); }
   .coaching-coverage-note { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
 
+  /* Replay scrubber */
+  .replay-scrub { display: flex; align-items: center; gap: 10px; }
+  .replay-track { position: relative; flex: 1; }
+  .replay-track input[type="range"] { width: 100%; margin: 0; position: relative; z-index: 1; }
+  /* Markers sit behind the slider so the thumb stays grabbable; pointer-events
+     off for the same reason. */
+  .replay-markers {
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 12px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .replay-markers span {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 12px;
+    border-radius: 1px;
+    opacity: 0.75;
+  }
+  .replay-markers .warn { background: var(--warn); }
+  .replay-markers .info { background: var(--muted); }
+  .replay-markers .ok { background: var(--ok); }
+  .replay-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 4.5em;
+    text-align: right;
+  }
+  .replay-state { font-size: 12px; margin: 10px 0 8px; color: var(--muted); }
+  .replay-state strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .replay-coverage { margin-bottom: 8px; }
+  .replay-subhead { font-size: 12px; margin: 14px 0 6px; }
+  .replay-events { margin: 0; padding-left: 1.4em; }
+  .replay-events li { font-size: 12px; margin-bottom: 4px; }
+  .replay-events .at { font-variant-numeric: tabular-nums; color: var(--muted); margin-right: 6px; }
+  .replay-events .warn { color: var(--warn); }
+  .replay-events .ok { color: var(--ok); }
+  .replay-events .live-tag {
+    font-size: 10px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-left: 6px;
+    color: var(--muted);
+  }
+
   .coaching-monologues { list-style: none; margin: 0; padding: 0; }
   .coaching-monologues li { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
   .coaching-monologues .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
@@ -597,6 +647,29 @@
             <div class="coaching-block">
               <h4>気づき</h4>
               <ul id="coaching-nudges" class="coaching-nudges"></ul>
+            </div>
+
+            <div class="coaching-block" id="coaching-replay" hidden>
+              <h4>振り返り（時系列）</h4>
+              <div class="replay-scrub">
+                <div class="replay-track">
+                  <div id="replay-markers" class="replay-markers"></div>
+                  <input id="replay-slider" type="range" min="0" max="0" step="1000" value="0"
+                         aria-label="会議の経過時間" />
+                </div>
+                <span id="replay-time" class="replay-time">00:00</span>
+              </div>
+
+              <div id="replay-state" class="replay-state"></div>
+              <ul id="replay-coverage" class="coaching-coverage replay-coverage"></ul>
+              <ul id="replay-active" class="coaching-nudges"></ul>
+
+              <h5 class="replay-subhead">この会議で出た指摘</h5>
+              <ol id="replay-events" class="replay-events"></ol>
+
+              <p class="coaching-coverage-note">
+                画面に表示された内容の記録ではなく、確定した書き起こしから再現したものです。字幕は確定後に訂正されることがあるため、当時の表示とわずかに異なる場合があります。
+              </p>
             </div>
 
             <div class="coaching-block">

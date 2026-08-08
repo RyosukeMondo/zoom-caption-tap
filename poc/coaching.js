@@ -702,6 +702,146 @@
     await chrome.storage.local.set({ [SELLER_KEY]: map });
   }
 
+  // The nudges that only exist while a call is running. Post-hoc observations
+  // are true of the whole meeting and would sit on the replay track end to end;
+  // these are the ones that actually have a "when".
+  const LIVE_METRICS = new Set([
+    "monologueNow",
+    "openQuestionDrought",
+    "objectionNow",
+    "coverageNow",
+    "customerSilent",
+  ]);
+
+  const REPLAY_STEP_MS = 15000;
+  // A ceiling on work: a 3-hour meeting at 15s steps is 720 frames, each
+  // re-analysing the whole prefix. Past this the step widens instead.
+  const REPLAY_MAX_FRAMES = 600;
+
+  /**
+   * Reconstructs what the live panel would have shown, moment by moment.
+   *
+   * This is a *reconstruction, not a recording*. Nothing is logged during a
+   * meeting; it works because analyzeLive() is a pure function of (transcript
+   * prefix, clock), so replaying prefixes reproduces the call — including for
+   * meetings archived long before this existed.
+   *
+   * Where it can differ from what was really on screen: captions settle after
+   * SETTLE_MS and can be corrected afterwards, so the archived transcript may
+   * hold text that was different, or not yet present, at that moment. Label it
+   * as a reconstruction in the UI — never as a record of what was displayed.
+   *
+   * Returns null for an empty transcript or a seller who never spoke, as
+   * analyze() does.
+   */
+  function replay(record, seller, { stepMs = REPLAY_STEP_MS } = {}) {
+    const all = (record?.transcript ?? [])
+      .filter((l) => l && typeof l.at === "number")
+      .sort((a, b) => a.at - b.at);
+    if (!all.length || !seller) return null;
+    if (!analyze({ transcript: all }, seller)) return null;
+
+    const startAt = all[0].at;
+    const endAt = all[all.length - 1].at;
+    const durationMs = Math.max(0, endAt - startAt);
+
+    let step = Math.max(1000, stepMs);
+    if (durationMs / step > REPLAY_MAX_FRAMES) step = Math.ceil(durationMs / REPLAY_MAX_FRAMES);
+
+    const frames = [];
+    const prefix = [];
+    let idx = 0;
+    for (let at = startAt; ; at += step) {
+      const t = Math.min(at, endAt);
+      while (idx < all.length && all[idx].at <= t) prefix.push(all[idx++]);
+      const { report, nudges: items } = analyzeLive({ transcript: prefix.slice() }, seller, t);
+      frames.push({
+        at: t,
+        elapsedMs: t - startAt,
+        lineCount: prefix.length,
+        talkRatio: report ? report.talkRatio : null,
+        coveredCount: report ? report.coveredCount : 0,
+        coverage: report ? report.coverage : [],
+        nudges: items,
+      });
+      if (t >= endAt) break;
+    }
+
+    // Spans, not points: "you left an objection hanging for four minutes" is a
+    // different fact from "an objection was raised once".
+    const events = [];
+    const open = new Map();
+    for (const f of frames) {
+      const present = new Set(f.nudges.map((n) => n.metric));
+      for (const [metric, ev] of [...open]) {
+        if (!present.has(metric)) {
+          ev.clearedAt = f.at;
+          events.push(ev);
+          open.delete(metric);
+        }
+      }
+      for (const n of f.nudges) {
+        const existing = open.get(n.metric);
+        if (!existing) {
+          open.set(n.metric, {
+            metric: n.metric,
+            level: n.level,
+            // Kept fresh as the span runs: counts inside the wording grow, and
+            // the final phrasing is the one worth showing.
+            text: n.text,
+            live: LIVE_METRICS.has(n.metric),
+            firstAt: f.at,
+            elapsedMs: f.at - startAt,
+            lastAt: f.at,
+            clearedAt: null,
+          });
+        } else {
+          existing.text = n.text;
+          existing.level = n.level;
+          existing.lastAt = f.at;
+        }
+      }
+    }
+    for (const ev of open.values()) events.push(ev);
+    events.sort((a, b) => a.firstAt - b.firstAt || a.metric.localeCompare(b.metric));
+
+    // When each qualification topic was first satisfied — the plainest answer
+    // to "what got covered, and when".
+    const coverageEvents = COVERAGE.map((topic) => {
+      const frame = frames.find((f) => f.coverage.find((c) => c.key === topic.key)?.covered);
+      const hit = frame ? frame.coverage.find((c) => c.key === topic.key) : null;
+      return {
+        key: topic.key,
+        label: topic.label,
+        covered: Boolean(frame),
+        at: hit?.at ?? null,
+        // Measured from the matched utterance, not the frame that noticed it —
+        // the frame boundary is an artefact of the sampling step.
+        elapsedMs: hit?.at != null ? hit.at - startAt : null,
+        speaker: hit?.speaker ?? null,
+        text: hit?.text ?? "",
+      };
+    });
+
+    return { startAt, endAt, durationMs, stepMs: step, frames, events, coverageEvents };
+  }
+
+  /** The frame that was current at `elapsedMs` into the meeting. */
+  function frameAt(replayed, elapsedMs) {
+    const frames = replayed?.frames;
+    if (!frames?.length) return null;
+    if (elapsedMs <= frames[0].elapsedMs) return frames[0];
+    let lo = 0;
+    let hi = frames.length - 1;
+    if (elapsedMs >= frames[hi].elapsedMs) return frames[hi];
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (frames[mid].elapsedMs <= elapsedMs) lo = mid;
+      else hi = mid - 1;
+    }
+    return frames[lo];
+  }
+
   global.MeetingCoach = {
     SELLER_KEY,
     getSeller,
@@ -721,10 +861,14 @@
     COVERAGE_REMINDER_MS,
     COVERAGE,
     MIN_BASELINE_MEETINGS,
+    LIVE_METRICS,
+    REPLAY_STEP_MS,
     analyze,
     analyzeLive,
     nudges,
     baseline,
+    replay,
+    frameAt,
     questionsFor,
     coverageOf,
     objectionsOf,

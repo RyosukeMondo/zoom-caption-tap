@@ -514,6 +514,164 @@
     }
   }
 
+  // The replay currently on screen. Held so the slider's input handler can
+  // redraw without recomputing — a scrub fires this many times a second, and
+  // rebuilding 200 frames per drag would make it stutter.
+  let currentReplay = null;
+  // Guards against rebuilding on the second render: renderCoachingFeedback runs
+  // once immediately and again when the baseline lands, and a replay over a
+  // 600-line meeting is not free.
+  let currentReplayKey = null;
+
+  function mmss(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  /**
+   * Time-series review: scrub the meeting and see what the live panel would
+   * have shown at that moment, plus the full list of what came up and when.
+   *
+   * Reconstructed, not recorded — see MeetingCoach.replay(). The caveat is
+   * stated in the markup next to the control, because a user who thinks this is
+   * a recording will read a caption correction as the tool contradicting itself.
+   */
+  function renderCoachingReplay(record, sellerName) {
+    const wrap = el("#coaching-replay");
+    const key = `${record?.id ?? ""}::${sellerName ?? ""}`;
+    if (key === currentReplayKey && currentReplay) {
+      wrap.hidden = false;
+      return; // already built for this meeting + seller
+    }
+    currentReplayKey = key;
+    currentReplay = sellerName ? MeetingCoach.replay(record, sellerName) : null;
+
+    // A meeting too short to have a middle has nothing to scrub through.
+    if (!currentReplay || currentReplay.durationMs < 1000) {
+      wrap.hidden = true;
+      return;
+    }
+    wrap.hidden = false;
+
+    const slider = el("#replay-slider");
+    slider.min = "0";
+    slider.max = String(currentReplay.durationMs);
+    slider.step = String(currentReplay.stepMs);
+    slider.value = String(currentReplay.durationMs); // open at the end state
+
+    renderReplayMarkers();
+    renderReplayEvents();
+    renderReplayAt(currentReplay.durationMs);
+  }
+
+  /** Ticks on the track for every observation that has a "when". */
+  function renderReplayMarkers() {
+    const host = el("#replay-markers");
+    clearChildren(host);
+    if (!currentReplay?.durationMs) return;
+    for (const ev of currentReplay.events) {
+      if (!ev.live) continue; // post-hoc items are true of the whole call
+      const pct = (ev.elapsedMs / currentReplay.durationMs) * 100;
+      const tick = document.createElement("span");
+      tick.className = ev.level;
+      tick.style.left = `${Math.min(99.5, Math.max(0, pct))}%`;
+      host.appendChild(tick);
+    }
+  }
+
+  /** "When and what": every observation, in the order it appeared. */
+  function renderReplayEvents() {
+    const list = el("#replay-events");
+    clearChildren(list);
+    if (!currentReplay) return;
+
+    // Realtime first — those are the ones tied to a moment. Post-hoc items are
+    // already shown under 気づき and would only pad this list.
+    const shown = currentReplay.events.filter((e) => e.live);
+    if (!shown.length) {
+      const li = document.createElement("li");
+      li.textContent = "この会議では、リアルタイムの指摘は出ませんでした。";
+      list.appendChild(li);
+      return;
+    }
+
+    for (const ev of shown) {
+      const li = document.createElement("li");
+
+      const at = document.createElement("span");
+      at.className = "at";
+      const until = ev.clearedAt == null ? "終了まで" : mmss(ev.clearedAt - currentReplay.startAt);
+      at.textContent = `${mmss(ev.elapsedMs)}–${until}`;
+
+      const body = document.createElement("span");
+      body.className = ev.level;
+      body.textContent = ev.text;
+
+      li.appendChild(at);
+      li.appendChild(body);
+      list.appendChild(li);
+    }
+  }
+
+  /** Redraws the panel for one point in time. Called on every scrub. */
+  function renderReplayAt(elapsedMs) {
+    if (!currentReplay) return;
+    const frame = MeetingCoach.frameAt(currentReplay, elapsedMs);
+    if (!frame) return;
+
+    el("#replay-time").textContent = mmss(elapsedMs);
+
+    const state = el("#replay-state");
+    clearChildren(state);
+    const pct = frame.talkRatio == null ? "—" : `${Math.round(frame.talkRatio * 100)}%`;
+    for (const [label, value] of [
+      ["発言比率", pct],
+      ["ヒアリング", `${frame.coveredCount}/${currentReplay.coverageEvents.length}`],
+      ["発言数", String(frame.lineCount)],
+    ]) {
+      const span = document.createElement("span");
+      span.textContent = `${label} `;
+      const strong = document.createElement("strong");
+      strong.textContent = value;
+      span.appendChild(strong);
+      span.appendChild(document.createTextNode("　"));
+      state.appendChild(span);
+    }
+
+    const cov = el("#replay-coverage");
+    clearChildren(cov);
+    for (const c of frame.coverage) {
+      const li = document.createElement("li");
+      li.className = c.covered ? "covered" : "missing";
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = c.covered ? "✓" : "×";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = c.label;
+      li.appendChild(mark);
+      li.appendChild(label);
+      cov.appendChild(li);
+    }
+
+    const active = el("#replay-active");
+    clearChildren(active);
+    const live = frame.nudges.filter((n) => MeetingCoach.LIVE_METRICS.has(n.metric));
+    if (!live.length) {
+      const li = document.createElement("li");
+      li.className = "coaching-nudge coaching-nudge-ok";
+      li.textContent = "この時点で出ていた指摘はありません。";
+      active.appendChild(li);
+    } else {
+      for (const n of live) {
+        const li = document.createElement("li");
+        li.className = `coaching-nudge coaching-nudge-${n.level}`;
+        li.textContent = n.text;
+        active.appendChild(li);
+      }
+    }
+  }
+
   function renderCoachingNudges(report, baseline) {
     const list = el("#coaching-nudges");
     clearChildren(list);
@@ -578,6 +736,7 @@
     renderCoachingTiles(report);
     renderCoachingCoverage(report);
     renderCoachingNudges(report, baseline);
+    renderCoachingReplay(record, sellerName);
     renderCoachingNextStep(report);
     renderCoachingMonologues(record, report);
   }
@@ -766,6 +925,11 @@
     // persists across meeting switches, unlike per-meeting DOM), and the
     // healthy-range band is sized once from MeetingCoach's own constants.
     el("#coaching-seller-select").addEventListener("change", handleCoachingSellerChange);
+    // "input" rather than "change" so the panel tracks the thumb while dragging;
+    // renderReplayAt only reads a precomputed frame, so this stays cheap.
+    el("#replay-slider").addEventListener("input", (e) => {
+      renderReplayAt(Number(e.target.value));
+    });
     initCoachingRatioBand();
 
     await reloadArchive({ preferId: new URLSearchParams(location.search).get("id") });
