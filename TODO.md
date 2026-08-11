@@ -1,7 +1,13 @@
 # TODO / roadmap
 
 Two sources: things found while building, and things the customer asked for in
-the 2026-08-03 打ち合わせ (transcript summarised in the notes below).
+the 2026-08-03 and 2026-08-08 打ち合わせ.
+
+Transcripts live on the Windows box at `C:\Users\ryosu\Videos\*.txt` with
+`*.summary.md` beside them (`summary\` holds a second pass). Read them before
+recording a customer decision here — an entry in this file that says "the
+customer wanted X" and cannot be traced to a line in a transcript is how the
+Chrome Web Store item ended up inverted for a week.
 
 ---
 
@@ -95,13 +101,30 @@ Roughly in the order they seemed to want them.
 - [ ] **Enterprise RAG over internal docs** (the call-centre pitch, incl. the
       電気ポット / 電気ケトル synonym problem). Bespoke, deal-by-deal.
 - [ ] **Hosted 議事録 site** as an upsell tier.
+- [ ] **Chrome Web Store one-click install — blocked, not declined.**
+      This file used to list it under *Deliberately not doing*, claiming "the
+      customer explicitly preferred the clunky manual install as an IP moat".
+      Re-reading the 2026-08-03 transcript, nobody said that. What was actually
+      said:
+
+      - **You** (`08-30-35.txt:386`), straight after the client's manual install
+        failed mid-call: 「配布するときは拡張機能をストアからワンクリックで
+        インストールっていう組みにしないと終わるのと同じですよね」 — i.e. store
+        distribution is *required* for real distribution. That is an engineering
+        assessment, not a customer preference.
+      - **Nakano** (`:135`): his first buyers are 身内 and he will not sell to
+        anyone who looks like they would clone it. That makes the manual install
+        *tolerable for now* — it is not an endorsement of it.
+      - Both of you concluded (`:146`, `:160`) that the durable moat is Nakano's
+        own methodology, i.e. the RAG item above — **not** install friction.
+
+      So: deferred while the audience is 身内, genuinely needed before wider
+      sale, and unblocked by moving the valuable logic server-side (see the
+      licence-gating item). The 2026-08-08 打ち合わせ did not revisit it; its
+      only decision on this product was 「実際に試用してみる」.
 
 ## Deliberately not doing
 
-- **Chrome Web Store one-click install.** Deferred on purpose: publishing
-  exposes the source, and the customer explicitly preferred the clunky manual
-  install as an IP moat while the audience is 身内. Revisit when the valuable
-  logic has moved server-side.
 - **Tone / sentiment / confidence / interruption analysis.** Captions carry
   none of it. See `CLAUDE.md`.
 - **LLM-generated coaching advice.** See `CLAUDE.md`.
